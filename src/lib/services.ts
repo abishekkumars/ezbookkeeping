@@ -64,6 +64,9 @@ import type {
     ImportTransactionResponsePageWrapper
 } from '@/models/imported_transaction.ts';
 import type {
+    GoogleSheetImportPreviewResponse
+} from '@/models/google_sheet_import.ts';
+import type {
     TransactionCreateRequest,
     TransactionModifyRequest,
     TransactionBatchUpdateCategoryRequest,
@@ -746,6 +749,11 @@ export default {
         }, {
             timeout: timeout,
             cancelableUuid: cancelableUuid
+        } as ApiRequestConfig);
+    },
+    parseGoogleSheetImport: (req: { url: string }): ApiResponsePromise<GoogleSheetImportPreviewResponse> => {
+        return axios.post<ApiResponse<GoogleSheetImportPreviewResponse>>('v1/transactions/parse_google_sheet_import.json', req, {
+            timeout: DEFAULT_UPLOAD_API_TIMEOUT
         } as ApiRequestConfig);
     },
     importTransactions: (req: TransactionImportRequest): ApiResponsePromise<number> => {

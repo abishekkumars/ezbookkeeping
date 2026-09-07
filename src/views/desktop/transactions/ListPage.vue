@@ -95,6 +95,11 @@
                                     </v-menu>
                                 </v-btn>
                                 <v-btn class="ms-3" color="default" variant="outlined"
+                                       :disabled="loading" @click="importFromGoogleSheet"
+                                       v-if="isDataImportingEnabled() && isGoogleSheetImportEnabled()">
+                                    {{ tt('Import from Google Sheets') }}
+                                </v-btn>
+                                <v-btn class="ms-3" color="default" variant="outlined"
                                        :disabled="loading || exportingData || !transactions || !transactions.length || transactions.length < 1" v-if="!isDataImportingEnabled() && isDataExportingEnabled()">
                                     {{ tt('Export') }}
                                     <v-menu activator="parent">
@@ -681,6 +686,7 @@
     <edit-dialog ref="editDialog" :type="TransactionEditPageType.Transaction" />
     <a-i-image-recognition-dialog ref="aiImageRecognitionDialog" />
     <import-dialog ref="importDialog" :persistent="true" />
+    <google-sheet-import-dialog ref="googleSheetImportDialog" :persistent="true" />
 
     <account-filter-settings-dialog type="transactionListCurrent"
                                     v-model:show="showFilterAccountDialog"
@@ -707,6 +713,7 @@ import SnackBar from '@/components/desktop/SnackBar.vue';
 import EditDialog from './list/dialogs/EditDialog.vue';
 import AIImageRecognitionDialog from './list/dialogs/AIImageRecognitionDialog.vue';
 import ImportDialog from './import/ImportDialog.vue';
+import GoogleSheetImportDialog from './import/GoogleSheetImportDialog.vue';
 import AccountFilterSettingsDialog from '@/views/desktop/common/dialogs/AccountFilterSettingsDialog.vue';
 import CategoryFilterSettingsDialog from '@/views/desktop/common/dialogs/CategoryFilterSettingsDialog.vue';
 import TransactionTagFilterSettingsDialog from '@/views/desktop/common/dialogs/TransactionTagFilterSettingsDialog.vue';
@@ -788,6 +795,7 @@ import { allTransactionPictures } from '@/lib/transaction.ts';
 import {
     isDataExportingEnabled,
     isDataImportingEnabled,
+    isGoogleSheetImportEnabled,
     isTransactionFromAITextRecognitionEnabled,
     isTransactionFromAIImageRecognitionEnabled
 } from '@/lib/server_settings.ts';
@@ -833,6 +841,7 @@ type SnackBarType = InstanceType<typeof SnackBar>;
 type EditDialogType = InstanceType<typeof EditDialog>;
 type AIImageRecognitionDialogType = InstanceType<typeof AIImageRecognitionDialog>;
 type ImportDialogType = InstanceType<typeof ImportDialog>;
+type GoogleSheetImportDialogType = InstanceType<typeof GoogleSheetImportDialog>;
 
 interface TransactionListDisplayTotalAmount {
     incomeIsZero: boolean;
@@ -930,6 +939,7 @@ const snackbar = useTemplateRef<SnackBarType>('snackbar');
 const editDialog = useTemplateRef<EditDialogType>('editDialog');
 const aiImageRecognitionDialog = useTemplateRef<AIImageRecognitionDialogType>('aiImageRecognitionDialog');
 const importDialog = useTemplateRef<ImportDialogType>('importDialog');
+const googleSheetImportDialog = useTemplateRef<GoogleSheetImportDialogType>('googleSheetImportDialog');
 
 const activeTab = ref<string>('transactionPage');
 const currentPage = ref<number>(1);
@@ -1709,6 +1719,16 @@ function addByRecognizingImage(): void {
 
 function importTransaction(): void {
     importDialog.value?.open().then(() => {
+        reload(false, false);
+    }).catch(error => {
+        if (error) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+
+function importFromGoogleSheet(): void {
+    googleSheetImportDialog.value?.open().then(() => {
         reload(false, false);
     }).catch(error => {
         if (error) {
