@@ -426,6 +426,7 @@ func startWebServer(c *core.CliContext) error {
 			if config.EnableDataImport {
 				apiV1Route.POST("/transactions/parse_custom_file.json", bindApi(api.Transactions.TransactionParseImportCustomFileDataHandler, config))
 				apiV1Route.POST("/transactions/parse_import.json", bindApi(api.Transactions.TransactionParseImportFileHandler, config))
+				apiV1Route.POST("/transactions/parse_google_sheet_import.json", bindApi(api.Transactions.TransactionParseGoogleSheetImportHandler, config))
 				apiV1Route.POST("/transactions/import.json", bindApi(api.Transactions.TransactionImportHandler, config))
 				apiV1Route.GET("/transactions/import/process.json", bindApi(api.Transactions.TransactionImportProcessHandler, config))
 			}
