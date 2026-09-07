@@ -165,35 +165,9 @@ func markInSheetDuplicates(items []*models.ImportTransactionResponse) map[int]mo
 // range spanned by items (restricted to the accounts referenced by items) and returns their duplicate
 // keys, reusing the existing GetTransactionsByMaxTime service function rather than a new query.
 func (a *TransactionsApi) buildExistingGoogleSheetDuplicateKeys(c *core.WebContext, uid int64, items []*models.ImportTransactionResponse) (map[string]bool, error) {
-	minTime := items[0].Time
-	maxTime := items[0].Time
-	accountIdSet := make(map[int64]bool)
+	maxDbTransactionTime, minDbTransactionTime, accountIds := computeGoogleSheetDuplicateQueryBounds(items)
 
-	for i := 0; i < len(items); i++ {
-		item := items[i]
-
-		if item.Time < minTime {
-			minTime = item.Time
-		}
-
-		if item.Time > maxTime {
-			maxTime = item.Time
-		}
-
-		accountIdSet[item.SourceAccountId] = true
-
-		if item.DestinationAccountId != 0 {
-			accountIdSet[item.DestinationAccountId] = true
-		}
-	}
-
-	accountIds := make([]int64, 0, len(accountIdSet))
-
-	for accountId := range accountIdSet {
-		accountIds = append(accountIds, accountId)
-	}
-
-	existingTransactions, err := a.transactions.GetTransactionsByMaxTime(c, uid, maxTime+1, minTime-1, 0, nil, accountIds, nil, false, "", "", core.MATCH_MODE_DEFAULT, false, 1, maxGoogleSheetDuplicateCheckTransactionCount, false, true)
+	existingTransactions, err := a.transactions.GetTransactionsByMaxTime(c, uid, maxDbTransactionTime, minDbTransactionTime, 0, nil, accountIds, nil, false, "", "", core.MATCH_MODE_DEFAULT, false, 1, maxGoogleSheetDuplicateCheckTransactionCount, false, true)
 
 	if err != nil {
 		return nil, err
@@ -218,4 +192,45 @@ func (a *TransactionsApi) buildExistingGoogleSheetDuplicateKeys(c *core.WebConte
 
 func googleSheetDuplicateKey(transactionType models.TransactionType, unixTime int64, categoryId int64, accountId int64, amount int64, comment string) string {
 	return fmt.Sprintf("%d|%d|%d|%d|%d|%s", transactionType, unixTime, categoryId, accountId, amount, comment)
+}
+
+// computeGoogleSheetDuplicateQueryBounds is a pure, DB-independent function that derives the
+// GetTransactionsByMaxTime query bounds (in the DB's scaled transaction-time representation, not
+// plain unix seconds) and the distinct account IDs referenced by items, spanning the whole set.
+func computeGoogleSheetDuplicateQueryBounds(items []*models.ImportTransactionResponse) (maxDbTransactionTime int64, minDbTransactionTime int64, accountIds []int64) {
+	minTime := items[0].Time
+	maxTime := items[0].Time
+	accountIdSet := make(map[int64]bool)
+
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+
+		if item.Time < minTime {
+			minTime = item.Time
+		}
+
+		if item.Time > maxTime {
+			maxTime = item.Time
+		}
+
+		accountIdSet[item.SourceAccountId] = true
+
+		if item.DestinationAccountId != 0 {
+			accountIdSet[item.DestinationAccountId] = true
+		}
+	}
+
+	accountIds = make([]int64, 0, len(accountIdSet))
+
+	for accountId := range accountIdSet {
+		accountIds = append(accountIds, accountId)
+	}
+
+	// GetTransactionsByMaxTime compares against the stored transaction_time column, which is scaled
+	// (unix time * 1000, plus a sub-second sequence) rather than plain unix seconds - convert the
+	// unix-second bounds accordingly, or every real transaction time would compare as out of range.
+	maxDbTransactionTime = utils.GetMaxTransactionTimeFromUnixTime(maxTime)
+	minDbTransactionTime = utils.GetMinTransactionTimeFromUnixTime(minTime)
+
+	return maxDbTransactionTime, minDbTransactionTime, accountIds
 }
