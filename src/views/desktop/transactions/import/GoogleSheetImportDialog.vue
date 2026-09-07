@@ -45,6 +45,9 @@
                                 autofocus
                                 @keyup.enter="fetchSheet"
                             />
+                            <v-alert type="info" variant="tonal" density="compact" class="mt-4">
+                                {{ tt('Before pasting data, set the Time and Timezone columns to Plain Text (Format → Number → Plain text) — otherwise Google Sheets may silently reformat the dates and the import will fail.') }}
+                            </v-alert>
                         </div>
                     </v-window-item>
 

@@ -74,6 +74,14 @@ func (a *TransactionsApi) TransactionParseGoogleSheetImportHandler(c *core.WebCo
 	previewWrapper, previewErr := a.buildImportPreview(c, uid, dataImporter, fileData, clientTimezone, additionalOptions)
 
 	if previewErr != nil {
+		// Google Sheets silently auto-reformats pasted text that looks like a date/time (e.g.
+		// "2026-09-08 00:04:53" becomes "08-09-2026  12.04.53 AM" under some locales), which the
+		// importer then rejects as an invalid time. Surface a more actionable message for this
+		// specific, common case rather than the generic time-invalid error.
+		if previewErr == errs.ErrTransactionTimeInvalid || previewErr == errs.ErrTransactionTimeZoneInvalid {
+			return nil, errs.ErrGoogleSheetTimeColumnInvalid
+		}
+
 		return nil, previewErr
 	}
 
