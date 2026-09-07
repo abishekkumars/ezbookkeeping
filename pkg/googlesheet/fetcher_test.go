@@ -13,6 +13,34 @@ import (
 	"github.com/mayswind/ezbookkeeping/pkg/errs"
 )
 
+func TestIsAllowedRedirectHost_OriginalHost(t *testing.T) {
+	assert.True(t, isAllowedRedirectHost("docs.google.com"))
+	assert.True(t, isAllowedRedirectHost("DOCS.GOOGLE.COM"))
+}
+
+func TestIsAllowedRedirectHost_GoogleUserContentCDN(t *testing.T) {
+	// This is the real redirect target docs.google.com/.../export?format=csv sends the actual file
+	// content from - confirmed by manually testing this feature against a live Google Sheet, which
+	// is exactly how this case was caught: the fetcher initially rejected it as "disallowed host".
+	assert.True(t, isAllowedRedirectHost("doc-08-34-sheets.googleusercontent.com"))
+	assert.True(t, isAllowedRedirectHost("lh3.googleusercontent.com"))
+}
+
+func TestIsAllowedRedirectHost_RejectsUnrelatedAndSpoofedHosts(t *testing.T) {
+	disallowedHosts := []string{
+		"evil.com",
+		"googleusercontent.com.evil.com",
+		"evilgoogleusercontent.com",
+		"127.0.0.1",
+		"localhost",
+		"",
+	}
+
+	for _, host := range disallowedHosts {
+		assert.False(t, isAllowedRedirectHost(host), "host %q should not be allowed", host)
+	}
+}
+
 func newTestFetcher(t *testing.T, server *httptest.Server, maxResponseSize int64, timeout time.Duration) *Fetcher {
 	t.Cleanup(server.Close)
 

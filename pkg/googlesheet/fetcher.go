@@ -15,6 +15,22 @@ import (
 
 const maxRedirectCount = 3
 
+// googleUserContentHostSuffix is Google's own CDN host for exported file content - a csv export
+// request to docs.google.com legitimately 30x-redirects here to actually serve the data. This is
+// still exclusively Google-controlled infrastructure (nobody else can obtain a subdomain of it), so
+// allowing it does not reopen the SSRF gap the host allowlist exists to close.
+const googleUserContentHostSuffix = ".googleusercontent.com"
+
+// isAllowedRedirectHost reports whether a redirect target is safe to follow: either the original
+// Google Sheets host, or Google's own user-content CDN that csv exports are actually served from.
+func isAllowedRedirectHost(host string) bool {
+	if strings.EqualFold(host, googleSheetHost) {
+		return true
+	}
+
+	return len(host) > len(googleUserContentHostSuffix) && strings.HasSuffix(strings.ToLower(host), googleUserContentHostSuffix)
+}
+
 // Fetcher fetches csv data exported from a Google Sheet over a hardened http client
 type Fetcher struct {
 	httpClient      *http.Client
@@ -37,7 +53,7 @@ func NewFetcher(config *settings.GoogleSheetImportConfig) *Fetcher {
 			return errors.New("too many redirects")
 		}
 
-		if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Hostname(), googleSheetHost) {
+		if req.URL.Scheme != "https" || !isAllowedRedirectHost(req.URL.Hostname()) {
 			return errors.New("redirected to a disallowed host")
 		}
 
