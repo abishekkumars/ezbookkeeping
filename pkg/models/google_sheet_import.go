@@ -26,7 +26,11 @@ type GoogleSheetImportPreviewItem struct {
 
 // GoogleSheetImportPreviewResponse represents the response of a Google Sheet import preview request
 type GoogleSheetImportPreviewResponse struct {
-	TotalRowCount     int64                            `json:"totalRowCount"`
-	DuplicateRowCount int64                            `json:"duplicateRowCount"`
-	Items             []*GoogleSheetImportPreviewItem  `json:"items"`
+	// SpreadsheetName and SheetName are best-effort display names parsed from the Google Sheets
+	// export response; either may be empty if Google didn't provide them in a recognized shape.
+	SpreadsheetName   string                          `json:"spreadsheetName,omitempty"`
+	SheetName         string                          `json:"sheetName,omitempty"`
+	TotalRowCount     int64                           `json:"totalRowCount"`
+	DuplicateRowCount int64                           `json:"duplicateRowCount"`
+	Items             []*GoogleSheetImportPreviewItem `json:"items"`
 }

@@ -11,6 +11,7 @@ import {
     type ApplicationSettings,
     type ApplicationCloudSetting,
     type LocaleDefaultSettings,
+    type GoogleSheetImportUrlHistoryEntry,
     UserApplicationCloudSettingType,
     ALL_ALLOWED_CLOUD_SYNC_APP_SETTING_KEY_TYPES
 } from '@/core/setting.ts';
@@ -353,28 +354,36 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Google Sheet Import Dialog
     // This history is kept in local browser storage only (not synced via updateUserApplicationCloudSettingValue,
-    // which has no Record<string, number> value type) since it's a per-device convenience, not a cross-device preference.
-    function addGoogleSheetImportUrlToHistory(url: string): void {
-        const history = Object.assign({}, appSettings.value.googleSheetImportUrlHistory);
-        history[url] = Math.floor(Date.now() / 1000);
-
-        const trimmedHistory: Record<string, number> = {};
-        const sortedEntries = Object.entries(history).sort((entry1, entry2) => entry2[1] - entry1[1]);
-
-        for (const [historyUrl, lastUsedTime] of sortedEntries.slice(0, MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT)) {
-            trimmedHistory[historyUrl] = lastUsedTime;
+    // which has no value type for it) since it's a per-device convenience, not a cross-device preference.
+    function getGoogleSheetImportUrlHistory(): GoogleSheetImportUrlHistoryEntry[] {
+        try {
+            const parsed: unknown = JSON.parse(appSettings.value.googleSheetImportUrlHistory || '[]');
+            return Array.isArray(parsed) ? parsed as GoogleSheetImportUrlHistoryEntry[] : [];
+        } catch {
+            return [];
         }
+    }
 
-        updateApplicationSettingsValue('googleSheetImportUrlHistory', trimmedHistory);
-        appSettings.value.googleSheetImportUrlHistory = trimmedHistory;
+    function saveGoogleSheetImportUrlHistory(history: GoogleSheetImportUrlHistoryEntry[]): void {
+        const sortedHistory = history
+            .slice()
+            .sort((entry1, entry2) => entry2.lastUsedTime - entry1.lastUsedTime)
+            .slice(0, MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT);
+        const serializedHistory = JSON.stringify(sortedHistory);
+
+        updateApplicationSettingsValue('googleSheetImportUrlHistory', serializedHistory);
+        appSettings.value.googleSheetImportUrlHistory = serializedHistory;
+    }
+
+    function addGoogleSheetImportUrlToHistory(url: string, displayName?: string): void {
+        const history = getGoogleSheetImportUrlHistory().filter(entry => entry.url !== url);
+        history.push({ url: url, lastUsedTime: Math.floor(Date.now() / 1000), displayName: displayName });
+        saveGoogleSheetImportUrlHistory(history);
     }
 
     function removeGoogleSheetImportUrlFromHistory(url: string): void {
-        const history = Object.assign({}, appSettings.value.googleSheetImportUrlHistory);
-        delete history[url];
-
-        updateApplicationSettingsValue('googleSheetImportUrlHistory', history);
-        appSettings.value.googleSheetImportUrlHistory = history;
+        const history = getGoogleSheetImportUrlHistory().filter(entry => entry.url !== url);
+        saveGoogleSheetImportUrlHistory(history);
     }
 
     // Insights Explorer Page
@@ -667,6 +676,7 @@ export const useSettingsStore = defineStore('settings', () => {
         setRememberLastSelectedFileTypeInImportTransactionDialog,
         setLastSelectedFileTypeInImportTransactionDialog,
         // -- Google Sheet Import Dialog
+        getGoogleSheetImportUrlHistory,
         addGoogleSheetImportUrlToHistory,
         removeGoogleSheetImportUrlFromHistory,
         // -- Insights Explorer Page

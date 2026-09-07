@@ -54,10 +54,11 @@
                                     <v-menu activator="parent" location="bottom end" max-height="320" v-if="sortedUrlHistory.length > 0">
                                         <v-list density="compact">
                                             <v-list-item :key="entry.url"
-                                                         :title="entry.url"
+                                                         :title="getHistoryEntryDisplayLabel(entry)"
                                                          :subtitle="getDisplayHistoryTime(entry.lastUsedTime)"
                                                          v-for="entry in sortedUrlHistory"
                                                          @click="selectHistoryUrl(entry.url)">
+                                                <v-tooltip activator="parent" location="start">{{ entry.url }}</v-tooltip>
                                                 <template #append>
                                                     <v-icon size="small" :icon="mdiClose"
                                                             :aria-label="tt('Remove')"
@@ -164,6 +165,7 @@ import { useStatisticsStore } from '@/stores/statistics.ts';
 import { useSettingsStore } from '@/stores/setting.ts';
 
 import { TransactionType } from '@/core/transaction.ts';
+import type { GoogleSheetImportUrlHistoryEntry } from '@/core/setting.ts';
 import { ImportTransaction } from '@/models/imported_transaction.ts';
 
 import { isNumber } from '@/lib/common.ts';
@@ -232,18 +234,15 @@ const importedCount = ref<number | undefined>(undefined);
 const readyToImportCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid && transaction.selected).length);
 const invalidRowCount = computed<number>(() => importTransactions.value.filter(transaction => !transaction.valid).length);
 
-interface GoogleSheetUrlHistoryEntry {
-    url: string;
-    lastUsedTime: number;
-}
-
-const sortedUrlHistory = computed<GoogleSheetUrlHistoryEntry[]>(() => {
-    const history = settingsStore.appSettings.googleSheetImportUrlHistory;
-
-    return Object.entries(history)
-        .map(([url, lastUsedTime]) => ({ url, lastUsedTime }))
+const sortedUrlHistory = computed<GoogleSheetImportUrlHistoryEntry[]>(() => {
+    return settingsStore.getGoogleSheetImportUrlHistory()
+        .slice()
         .sort((entry1, entry2) => entry2.lastUsedTime - entry1.lastUsedTime);
 });
+
+function getHistoryEntryDisplayLabel(entry: GoogleSheetImportUrlHistoryEntry): string {
+    return entry.displayName || entry.url;
+}
 
 function selectHistoryUrl(url: string): void {
     sheetUrl.value = url;
@@ -255,6 +254,17 @@ function removeHistoryUrl(url: string): void {
 
 function getDisplayHistoryTime(unixTime: number): string {
     return formatDateTimeToLongDateTime(parseDateTimeFromUnixTime(unixTime));
+}
+
+// Google's export response only sometimes includes usable spreadsheet/sheet names (best-effort,
+// undocumented header) - build "Spreadsheet(Sheet)" when both are known, fall back to whichever one
+// is available, and leave it undefined (so the raw url is shown instead) when neither is.
+function getGoogleSheetDisplayName(spreadsheetName?: string, sheetName?: string): string | undefined {
+    if (spreadsheetName && sheetName) {
+        return `${spreadsheetName}(${sheetName})`;
+    }
+
+    return spreadsheetName || sheetName || undefined;
 }
 
 function open(): Promise<void> {
@@ -309,7 +319,7 @@ function fetchSheet(): void {
         totalRowCount.value = response.totalRowCount;
         duplicateRowCount.value = response.duplicateRowCount;
         currentStep.value = 'checkData';
-        settingsStore.addGoogleSheetImportUrlToHistory(trimmedUrl);
+        settingsStore.addGoogleSheetImportUrlToHistory(trimmedUrl, getGoogleSheetDisplayName(response.spreadsheetName, response.sheetName));
     }).catch(error => {
         fetching.value = false;
 

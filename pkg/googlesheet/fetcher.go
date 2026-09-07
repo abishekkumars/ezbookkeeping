@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/mayswind/ezbookkeeping/pkg/core"
@@ -69,8 +70,19 @@ func NewFetcher(config *settings.GoogleSheetImportConfig) *Fetcher {
 	}
 }
 
+// FetchResult holds the fetched csv data along with the spreadsheet/sheet display names Google
+// includes on the export response, when available. SpreadsheetName and SheetName are best-effort
+// only (parsed from a response header Google doesn't formally document the format of) and are never
+// required for the import itself to succeed - they exist purely so callers can show the user a
+// friendlier label than the raw url.
+type FetchResult struct {
+	Data            []byte
+	SpreadsheetName string
+	SheetName       string
+}
+
 // FetchCSV fetches the csv content exported by the specified Google Sheet url
-func (f *Fetcher) FetchCSV(ctx core.Context, sheetUrl *GoogleSheetURL) ([]byte, error) {
+func (f *Fetcher) FetchCSV(ctx core.Context, sheetUrl *GoogleSheetURL) (*FetchResult, error) {
 	req, err := http.NewRequest(http.MethodGet, f.buildRequestUrl(sheetUrl), nil)
 
 	if err != nil {
@@ -130,5 +142,61 @@ func (f *Fetcher) FetchCSV(ctx core.Context, sheetUrl *GoogleSheetURL) ([]byte, 
 		return nil, errs.ErrGoogleSheetEmpty
 	}
 
-	return data, nil
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition(resp.Header.Get("Content-Disposition"))
+
+	return &FetchResult{
+		Data:            data,
+		SpreadsheetName: spreadsheetName,
+		SheetName:       sheetName,
+	}, nil
+}
+
+// parseSpreadsheetAndSheetNameFromContentDisposition extracts the spreadsheet name and sheet name
+// from a csv export response's Content-Disposition header, which Google Sheets currently formats as
+// filename*=UTF-8''"{spreadsheet name} - {sheet name}.csv". This is undocumented Google behavior, so
+// parsing is best-effort: it returns empty strings (never an error) if the header is missing or
+// doesn't match the expected shape, since this is purely a display nicety and must never block the
+// actual import.
+func parseSpreadsheetAndSheetNameFromContentDisposition(contentDisposition string) (spreadsheetName string, sheetName string) {
+	filename := extractUtf8FilenameFromContentDisposition(contentDisposition)
+	filename = strings.TrimSuffix(filename, ".csv")
+
+	if filename == "" {
+		return "", ""
+	}
+
+	const separator = " - "
+	lastSeparatorIndex := strings.LastIndex(filename, separator)
+
+	if lastSeparatorIndex < 0 {
+		return filename, ""
+	}
+
+	return filename[:lastSeparatorIndex], filename[lastSeparatorIndex+len(separator):]
+}
+
+// extractUtf8FilenameFromContentDisposition returns the decoded value of the RFC 5987
+// filename*=UTF-8''<percent-encoded> parameter of a Content-Disposition header, or "" if absent or
+// malformed.
+func extractUtf8FilenameFromContentDisposition(contentDisposition string) string {
+	const marker = "filename*=UTF-8''"
+	markerIndex := strings.Index(contentDisposition, marker)
+
+	if markerIndex < 0 {
+		return ""
+	}
+
+	value := contentDisposition[markerIndex+len(marker):]
+
+	if semicolonIndex := strings.Index(value, ";"); semicolonIndex >= 0 {
+		value = value[:semicolonIndex]
+	}
+
+	decoded, err := url.PathUnescape(strings.TrimSpace(value))
+
+	if err != nil {
+		return ""
+	}
+
+	return decoded
 }

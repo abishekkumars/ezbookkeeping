@@ -57,7 +57,7 @@ func (a *TransactionsApi) TransactionParseGoogleSheetImportHandler(c *core.WebCo
 	}
 
 	fetcher := googlesheet.NewFetcher(googleSheetImportConfig)
-	fileData, err := fetcher.FetchCSV(c, sheetUrl)
+	fetchResult, err := fetcher.FetchCSV(c, sheetUrl)
 
 	if err != nil {
 		return nil, errs.Or(err, errs.ErrGoogleSheetFetchFailed)
@@ -71,7 +71,7 @@ func (a *TransactionsApi) TransactionParseGoogleSheetImportHandler(c *core.WebCo
 	}
 
 	additionalOptions := converter.ParseImporterOptions(a.CurrentConfig(), "")
-	previewWrapper, previewErr := a.buildImportPreview(c, uid, dataImporter, fileData, clientTimezone, additionalOptions)
+	previewWrapper, previewErr := a.buildImportPreview(c, uid, dataImporter, fetchResult.Data, clientTimezone, additionalOptions)
 
 	if previewErr != nil {
 		// Google Sheets silently auto-reformats pasted text that looks like a date/time (e.g.
@@ -106,6 +106,8 @@ func (a *TransactionsApi) TransactionParseGoogleSheetImportHandler(c *core.WebCo
 	}
 
 	return &models.GoogleSheetImportPreviewResponse{
+		SpreadsheetName:   fetchResult.SpreadsheetName,
+		SheetName:         fetchResult.SheetName,
 		TotalRowCount:     previewWrapper.TotalCount,
 		DuplicateRowCount: duplicateCount,
 		Items:             items,

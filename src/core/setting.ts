@@ -74,7 +74,10 @@ export interface ApplicationSettings extends BaseApplicationSetting {
     rememberLastSelectedFileTypeInImportTransactionDialog: boolean;
     lastSelectedFileTypeInImportTransactionDialog: string;
     // Google Sheet Import Dialog
-    googleSheetImportUrlHistory: Record<string, number>;
+    // Stored as a JSON-encoded GoogleSheetImportUrlHistoryEntry[] (most-recently-used first) rather
+    // than a plain Record, since a history entry needs more than the single string/number/boolean
+    // (or string/number/boolean map) shapes ApplicationSettingSubValue otherwise allows.
+    googleSheetImportUrlHistory: string;
     // Insights Explorer Page
     insightsExplorerDefaultDateRangeType: number;
     showTagInInsightsExplorerPage: boolean;
@@ -115,6 +118,12 @@ export enum UserApplicationCloudSettingType {
 export interface ApplicationCloudSetting {
     readonly settingKey: string;
     readonly settingValue: string;
+}
+
+export interface GoogleSheetImportUrlHistoryEntry {
+    readonly url: string;
+    readonly lastUsedTime: number;
+    readonly displayName?: string;
 }
 
 export interface LocaleDefaultSettings {
@@ -238,7 +247,7 @@ export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
     rememberLastSelectedFileTypeInImportTransactionDialog: true,
     lastSelectedFileTypeInImportTransactionDialog: '',
     // Google Sheet Import Dialog
-    googleSheetImportUrlHistory: {},
+    googleSheetImportUrlHistory: '[]',
     // Insights Explorer Page
     insightsExplorerDefaultDateRangeType: DEFAULT_TRANSACTION_EXPLORER_DATE_RANGE.type,
     showTagInInsightsExplorerPage: true,

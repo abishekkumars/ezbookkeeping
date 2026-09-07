@@ -61,10 +61,82 @@ func TestFetcher_FetchCSV_Success(t *testing.T) {
 	}))
 
 	fetcher := newTestFetcher(t, server, 1024, time.Second)
-	data, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
+	result, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
 
 	assert.Nil(t, err)
-	assert.True(t, strings.Contains(string(data), "Expense"))
+	assert.True(t, strings.Contains(string(result.Data), "Expense"))
+}
+
+func TestFetcher_FetchCSV_ParsesSpreadsheetAndSheetNameFromContentDisposition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", `attachment; filename="MyBudget-Sheet1.csv"; filename*=UTF-8''My%20Budget%20-%20Sheet1.csv`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Time,Type,Amount\n2026-01-01 00:00:00,Expense,100\n"))
+	}))
+
+	fetcher := newTestFetcher(t, server, 1024, time.Second)
+	result, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
+
+	assert.Nil(t, err)
+	assert.Equal(t, "My Budget", result.SpreadsheetName)
+	assert.Equal(t, "Sheet1", result.SheetName)
+}
+
+func TestFetcher_FetchCSV_MissingContentDispositionLeavesNamesEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Time,Type,Amount\n2026-01-01 00:00:00,Expense,100\n"))
+	}))
+
+	fetcher := newTestFetcher(t, server, 1024, time.Second)
+	result, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
+
+	assert.Nil(t, err)
+	assert.Equal(t, "", result.SpreadsheetName)
+	assert.Equal(t, "", result.SheetName)
+}
+
+func TestParseSpreadsheetAndSheetNameFromContentDisposition(t *testing.T) {
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition(
+		`attachment; filename="Untitledspreadsheet-Sheet1.csv"; filename*=UTF-8''Untitled%20spreadsheet%20-%20Sheet1.csv`)
+
+	assert.Equal(t, "Untitled spreadsheet", spreadsheetName)
+	assert.Equal(t, "Sheet1", sheetName)
+}
+
+func TestParseSpreadsheetAndSheetNameFromContentDisposition_NameContainsSeparator(t *testing.T) {
+	// The spreadsheet's own name can itself contain " - "; splitting on the LAST occurrence keeps
+	// that intact and still isolates the (much shorter, simpler) sheet/tab name correctly.
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition(
+		`attachment; filename*=UTF-8''My%20Budget%20-%202026%20-%20Sheet1.csv`)
+
+	assert.Equal(t, "My Budget - 2026", spreadsheetName)
+	assert.Equal(t, "Sheet1", sheetName)
+}
+
+func TestParseSpreadsheetAndSheetNameFromContentDisposition_NoSeparator(t *testing.T) {
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition(
+		`attachment; filename*=UTF-8''Untitled.csv`)
+
+	assert.Equal(t, "Untitled", spreadsheetName)
+	assert.Equal(t, "", sheetName)
+}
+
+func TestParseSpreadsheetAndSheetNameFromContentDisposition_Empty(t *testing.T) {
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition("")
+
+	assert.Equal(t, "", spreadsheetName)
+	assert.Equal(t, "", sheetName)
+}
+
+func TestParseSpreadsheetAndSheetNameFromContentDisposition_MalformedEscape(t *testing.T) {
+	spreadsheetName, sheetName := parseSpreadsheetAndSheetNameFromContentDisposition(
+		`attachment; filename*=UTF-8''Bad%ZZName.csv`)
+
+	assert.Equal(t, "", spreadsheetName)
+	assert.Equal(t, "", sheetName)
 }
 
 func TestFetcher_FetchCSV_NotFound(t *testing.T) {
@@ -158,8 +230,8 @@ func TestFetcher_FetchCSV_InvalidCSVIsStillReturnedForImporterToValidate(t *test
 	}))
 
 	fetcher := newTestFetcher(t, server, 1024, time.Second)
-	data, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
+	result, err := fetcher.FetchCSV(core.NewNullContext(), &GoogleSheetURL{SpreadsheetId: "abc"})
 
 	assert.Nil(t, err)
-	assert.NotEmpty(t, data)
+	assert.NotEmpty(t, result.Data)
 }

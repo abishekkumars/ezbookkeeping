@@ -7,6 +7,8 @@ export interface GoogleSheetImportPreviewItemResponse extends ImportTransactionR
 }
 
 export interface GoogleSheetImportPreviewResponse {
+    readonly spreadsheetName?: string;
+    readonly sheetName?: string;
     readonly totalRowCount: number;
     readonly duplicateRowCount: number;
     readonly items: GoogleSheetImportPreviewItemResponse[];
