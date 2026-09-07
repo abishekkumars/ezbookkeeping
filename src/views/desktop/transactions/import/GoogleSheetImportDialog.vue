@@ -37,14 +37,37 @@
                 <v-window class="disable-tab-transition" v-model="currentStep">
                     <v-window-item value="enterUrl">
                         <div class="pa-4">
-                            <v-text-field
-                                :label="tt('Google Sheets URL')"
-                                :placeholder="tt('e.g. https://docs.google.com/spreadsheets/d/...')"
-                                :disabled="fetching"
-                                v-model="sheetUrl"
-                                autofocus
-                                @keyup.enter="fetchSheet"
-                            />
+                            <div class="d-flex align-center gap-2">
+                                <v-text-field class="flex-grow-1"
+                                    :label="tt('Google Sheets URL')"
+                                    :placeholder="tt('e.g. https://docs.google.com/spreadsheets/d/...')"
+                                    :disabled="fetching"
+                                    v-model="sheetUrl"
+                                    autofocus
+                                    @keyup.enter="fetchSheet"
+                                />
+                                <v-btn density="comfortable" color="default" variant="text" class="mb-5"
+                                       :aria-label="tt('Recently Used')" :icon="true"
+                                       :disabled="fetching || sortedUrlHistory.length < 1">
+                                    <v-icon :icon="mdiHistory" />
+                                    <v-tooltip activator="parent">{{ tt('Recently Used') }}</v-tooltip>
+                                    <v-menu activator="parent" location="bottom end" max-height="320" v-if="sortedUrlHistory.length > 0">
+                                        <v-list density="compact">
+                                            <v-list-item :key="entry.url"
+                                                         :title="entry.url"
+                                                         :subtitle="getDisplayHistoryTime(entry.lastUsedTime)"
+                                                         v-for="entry in sortedUrlHistory"
+                                                         @click="selectHistoryUrl(entry.url)">
+                                                <template #append>
+                                                    <v-icon size="small" :icon="mdiClose"
+                                                            :aria-label="tt('Remove')"
+                                                            @click.stop="removeHistoryUrl(entry.url)" />
+                                                </template>
+                                            </v-list-item>
+                                        </v-list>
+                                    </v-menu>
+                                </v-btn>
+                            </div>
                             <v-alert type="info" variant="tonal" density="compact" class="mt-4">
                                 {{ tt('Before pasting data, set the Time and Timezone columns to Plain Text (Format → Number → Plain text) — otherwise Google Sheets may silently reformat the dates and the import will fail.') }}
                             </v-alert>
@@ -138,13 +161,14 @@ import { useAccountsStore } from '@/stores/account.ts';
 import { useTransactionsStore } from '@/stores/transaction.ts';
 import { useOverviewStore } from '@/stores/overview.ts';
 import { useStatisticsStore } from '@/stores/statistics.ts';
+import { useSettingsStore } from '@/stores/setting.ts';
 
 import { TransactionType } from '@/core/transaction.ts';
 import { ImportTransaction } from '@/models/imported_transaction.ts';
 
 import { isNumber } from '@/lib/common.ts';
 import { parseBigDecimal } from '@/lib/numeral.ts';
-import { parseDateTimeFromUnixTimeWithTimezoneOffset } from '@/lib/datetime.ts';
+import { parseDateTimeFromUnixTimeWithTimezoneOffset, parseDateTimeFromUnixTime } from '@/lib/datetime.ts';
 import { generateRandomUUID } from '@/lib/misc.ts';
 
 import OneColumnDialogLayout from '@/components/desktop/OneColumnDialogLayout.vue';
@@ -153,7 +177,9 @@ import SnackBar from '@/components/desktop/SnackBar.vue';
 
 import {
     mdiArrowLeft,
-    mdiAlertCircleOutline
+    mdiAlertCircleOutline,
+    mdiHistory,
+    mdiClose
 } from '@mdi/js';
 
 type ConfirmDialogType = InstanceType<typeof ConfirmDialog>;
@@ -182,6 +208,7 @@ const accountsStore = useAccountsStore();
 const transactionsStore = useTransactionsStore();
 const overviewStore = useOverviewStore();
 const statisticsStore = useStatisticsStore();
+const settingsStore = useSettingsStore();
 
 const confirmDialog = useTemplateRef<ConfirmDialogType>('confirmDialog');
 const snackbar = useTemplateRef<SnackBarType>('snackbar');
@@ -205,12 +232,37 @@ const importedCount = ref<number | undefined>(undefined);
 const readyToImportCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid && transaction.selected).length);
 const invalidRowCount = computed<number>(() => importTransactions.value.filter(transaction => !transaction.valid).length);
 
+interface GoogleSheetUrlHistoryEntry {
+    url: string;
+    lastUsedTime: number;
+}
+
+const sortedUrlHistory = computed<GoogleSheetUrlHistoryEntry[]>(() => {
+    const history = settingsStore.appSettings.googleSheetImportUrlHistory;
+
+    return Object.entries(history)
+        .map(([url, lastUsedTime]) => ({ url, lastUsedTime }))
+        .sort((entry1, entry2) => entry2.lastUsedTime - entry1.lastUsedTime);
+});
+
+function selectHistoryUrl(url: string): void {
+    sheetUrl.value = url;
+}
+
+function removeHistoryUrl(url: string): void {
+    settingsStore.removeGoogleSheetImportUrlFromHistory(url);
+}
+
+function getDisplayHistoryTime(unixTime: number): string {
+    return formatDateTimeToLongDateTime(parseDateTimeFromUnixTime(unixTime));
+}
+
 function open(): Promise<void> {
     currentStep.value = 'enterUrl';
     fetching.value = false;
     submitting.value = false;
     importProcess.value = 0;
-    sheetUrl.value = '';
+    sheetUrl.value = sortedUrlHistory.value[0]?.url ?? '';
     importTransactions.value = [];
     duplicateInfo.value = {};
     totalRowCount.value = 0;
@@ -257,6 +309,7 @@ function fetchSheet(): void {
         totalRowCount.value = response.totalRowCount;
         duplicateRowCount.value = response.duplicateRowCount;
         currentStep.value = 'checkData';
+        settingsStore.addGoogleSheetImportUrlToHistory(trimmedUrl);
     }).catch(error => {
         fetching.value = false;
 

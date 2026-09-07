@@ -2166,6 +2166,7 @@
     "Google Sheets URL": "Google Sheets URL",
     "e.g. https://docs.google.com/spreadsheets/d/...": "e.g. https://docs.google.com/spreadsheets/d/...",
     "Fetch Sheet": "Fetch Sheet",
+    "Recently Used": "Recently Used",
     "Before pasting data, set the Time and Timezone columns to Plain Text (Format → Number → Plain text) — otherwise Google Sheets may silently reformat the dates and the import will fail.": "Before pasting data, set the Time and Timezone columns to Plain Text (Format → Number → Plain text) — otherwise Google Sheets may silently reformat the dates and the import will fail.",
     "Row": "Row",
     "Duplicate": "Duplicate",

@@ -73,6 +73,8 @@ export interface ApplicationSettings extends BaseApplicationSetting {
     // Import Transaction Dialog
     rememberLastSelectedFileTypeInImportTransactionDialog: boolean;
     lastSelectedFileTypeInImportTransactionDialog: string;
+    // Google Sheet Import Dialog
+    googleSheetImportUrlHistory: Record<string, number>;
     // Insights Explorer Page
     insightsExplorerDefaultDateRangeType: number;
     showTagInInsightsExplorerPage: boolean;
@@ -235,6 +237,8 @@ export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
     // Import Transaction Dialog
     rememberLastSelectedFileTypeInImportTransactionDialog: true,
     lastSelectedFileTypeInImportTransactionDialog: '',
+    // Google Sheet Import Dialog
+    googleSheetImportUrlHistory: {},
     // Insights Explorer Page
     insightsExplorerDefaultDateRangeType: DEFAULT_TRANSACTION_EXPLORER_DATE_RANGE.type,
     showTagInInsightsExplorerPage: true,

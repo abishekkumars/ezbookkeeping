@@ -40,6 +40,8 @@ import {
 import logger from '@/lib/logger.ts';
 import services from '@/lib/services.ts';
 
+const MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT = 10;
+
 export const useSettingsStore = defineStore('settings', () => {
     const appSettings = ref<ApplicationSettings>(getApplicationSettings());
     const syncedAppSettings = ref<Record<string, boolean>>({});
@@ -349,6 +351,32 @@ export const useSettingsStore = defineStore('settings', () => {
         updateUserApplicationCloudSettingValue('lastSelectedFileTypeInImportTransactionDialog', value);
     }
 
+    // Google Sheet Import Dialog
+    // This history is kept in local browser storage only (not synced via updateUserApplicationCloudSettingValue,
+    // which has no Record<string, number> value type) since it's a per-device convenience, not a cross-device preference.
+    function addGoogleSheetImportUrlToHistory(url: string): void {
+        const history = Object.assign({}, appSettings.value.googleSheetImportUrlHistory);
+        history[url] = Math.floor(Date.now() / 1000);
+
+        const trimmedHistory: Record<string, number> = {};
+        const sortedEntries = Object.entries(history).sort((entry1, entry2) => entry2[1] - entry1[1]);
+
+        for (const [historyUrl, lastUsedTime] of sortedEntries.slice(0, MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT)) {
+            trimmedHistory[historyUrl] = lastUsedTime;
+        }
+
+        updateApplicationSettingsValue('googleSheetImportUrlHistory', trimmedHistory);
+        appSettings.value.googleSheetImportUrlHistory = trimmedHistory;
+    }
+
+    function removeGoogleSheetImportUrlFromHistory(url: string): void {
+        const history = Object.assign({}, appSettings.value.googleSheetImportUrlHistory);
+        delete history[url];
+
+        updateApplicationSettingsValue('googleSheetImportUrlHistory', history);
+        appSettings.value.googleSheetImportUrlHistory = history;
+    }
+
     // Insights Explorer Page
     function setInsightsExplorerDefaultDateRangeType(value: number): void {
         updateApplicationSettingsValue('insightsExplorerDefaultDateRangeType', value);
@@ -638,6 +666,9 @@ export const useSettingsStore = defineStore('settings', () => {
         // -- Import Transaction Dialog
         setRememberLastSelectedFileTypeInImportTransactionDialog,
         setLastSelectedFileTypeInImportTransactionDialog,
+        // -- Google Sheet Import Dialog
+        addGoogleSheetImportUrlToHistory,
+        removeGoogleSheetImportUrlFromHistory,
         // -- Insights Explorer Page
         setInsightsExplorerDefaultDateRangeType,
         setShowTagInInsightsExplorerPage,
