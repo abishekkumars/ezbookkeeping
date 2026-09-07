@@ -35,7 +35,9 @@ import {
     getLocaleDefaultSettings,
     updateApplicationSettingsValue,
     updateApplicationSettingsSubValue,
-    clearSettings
+    clearSettings,
+    getGoogleSheetImportUrlHistoryFromStorage,
+    setGoogleSheetImportUrlHistoryInStorage
 } from '@/lib/settings.ts';
 
 import logger from '@/lib/logger.ts';
@@ -43,10 +45,20 @@ import services from '@/lib/services.ts';
 
 const MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT = 10;
 
+function parseGoogleSheetImportUrlHistory(serialized: string): GoogleSheetImportUrlHistoryEntry[] {
+    try {
+        const parsed: unknown = JSON.parse(serialized || '[]');
+        return Array.isArray(parsed) ? parsed as GoogleSheetImportUrlHistoryEntry[] : [];
+    } catch {
+        return [];
+    }
+}
+
 export const useSettingsStore = defineStore('settings', () => {
     const appSettings = ref<ApplicationSettings>(getApplicationSettings());
     const syncedAppSettings = ref<Record<string, boolean>>({});
     const localeDefaultSettings = ref<LocaleDefaultSettings>(getLocaleDefaultSettings());
+    const googleSheetImportUrlHistory = ref<GoogleSheetImportUrlHistoryEntry[]>(parseGoogleSheetImportUrlHistory(getGoogleSheetImportUrlHistoryFromStorage()));
 
     const enableApplicationCloudSync = computed<boolean>(() => getObjectOwnFieldCount(syncedAppSettings.value) > 0);
 
@@ -353,15 +365,12 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     // Google Sheet Import Dialog
-    // This history is kept in local browser storage only (not synced via updateUserApplicationCloudSettingValue,
-    // which has no value type for it) since it's a per-device convenience, not a cross-device preference.
+    // Kept in its own local browser storage key (see getGoogleSheetImportUrlHistoryFromStorage),
+    // separate from the rest of ApplicationSettings, so it survives logout/clearAppSettings() - unlike
+    // a per-user preference like theme or language, this is a reuse convenience (closer to browser
+    // autofill history) that a returning user would still expect to see after logging back in.
     function getGoogleSheetImportUrlHistory(): GoogleSheetImportUrlHistoryEntry[] {
-        try {
-            const parsed: unknown = JSON.parse(appSettings.value.googleSheetImportUrlHistory || '[]');
-            return Array.isArray(parsed) ? parsed as GoogleSheetImportUrlHistoryEntry[] : [];
-        } catch {
-            return [];
-        }
+        return googleSheetImportUrlHistory.value;
     }
 
     function saveGoogleSheetImportUrlHistory(history: GoogleSheetImportUrlHistoryEntry[]): void {
@@ -369,10 +378,9 @@ export const useSettingsStore = defineStore('settings', () => {
             .slice()
             .sort((entry1, entry2) => entry2.lastUsedTime - entry1.lastUsedTime)
             .slice(0, MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT);
-        const serializedHistory = JSON.stringify(sortedHistory);
 
-        updateApplicationSettingsValue('googleSheetImportUrlHistory', serializedHistory);
-        appSettings.value.googleSheetImportUrlHistory = serializedHistory;
+        googleSheetImportUrlHistory.value = sortedHistory;
+        setGoogleSheetImportUrlHistoryInStorage(JSON.stringify(sortedHistory));
     }
 
     function addGoogleSheetImportUrlToHistory(url: string, displayName?: string): void {
