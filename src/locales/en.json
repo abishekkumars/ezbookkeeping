@@ -2173,6 +2173,8 @@
     "Duplicate row already in this sheet": "Duplicate row already in this sheet",
     "Duplicate of an existing transaction": "Duplicate of an existing transaction",
     "Rows with an unresolved account or category cannot be imported. Fix the sheet and fetch it again.": "Rows with an unresolved account or category cannot be imported. Fix the sheet and fetch it again.",
+    "Use the checkbox in the header to select or unselect every row, or hold Shift while clicking a checkbox to select a range of rows.": "Use the checkbox in the header to select or unselect every row, or hold Shift while clicking a checkbox to select a range of rows.",
+    "Unselect All": "Unselect All",
     "Refresh Accounts, Categories and Tags": "Refresh Accounts, Categories and Tags",
     "Upload File": "Upload File",
     "Upload Transaction Data File": "Upload Transaction Data File",

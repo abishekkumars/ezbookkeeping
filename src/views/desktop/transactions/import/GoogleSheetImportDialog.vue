@@ -89,10 +89,21 @@
                             <v-alert type="warning" variant="tonal" density="compact" class="mb-3" v-if="invalidRowCount > 0">
                                 {{ tt('Rows with an unresolved account or category cannot be imported. Fix the sheet and fetch it again.') }}
                             </v-alert>
+                            <div class="text-caption text-medium-emphasis mb-2">
+                                {{ tt('Use the checkbox in the header to select or unselect every row, or hold Shift while clicking a checkbox to select a range of rows.') }}
+                            </div>
                             <v-table density="compact" fixed-header height="420" class="google-sheet-import-table">
                                 <thead>
                                     <tr>
-                                        <th style="width: 44px"></th>
+                                        <th style="width: 44px">
+                                            <v-checkbox density="compact" color="primary"
+                                                        :aria-label="allSelectableRowsSelected ? tt('Unselect All') : tt('Select All')"
+                                                        :disabled="selectableRowCount < 1"
+                                                        :model-value="allSelectableRowsSelected"
+                                                        :indeterminate="someSelectableRowsSelected"
+                                                        @update:model-value="setAllRowsSelection(!!$event)" />
+                                            <v-tooltip activator="parent">{{ allSelectableRowsSelected ? tt('Unselect All') : tt('Select All') }}</v-tooltip>
+                                        </th>
                                         <th>{{ tt('Row') }}</th>
                                         <th>{{ tt('Time') }}</th>
                                         <th>{{ tt('Type') }}</th>
@@ -104,12 +115,15 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr :key="transaction.index" v-for="transaction in importTransactions">
+                                    <tr :key="transaction.index" v-for="(transaction, rowIndex) in importTransactions">
                                         <td>
                                             <v-checkbox density="compact"
                                                         :color="!transaction.valid ? 'error' : 'primary'"
                                                         :disabled="!transaction.valid"
-                                                        v-model="transaction.selected" />
+                                                        :model-value="transaction.selected"
+                                                        @mousedown="captureRangeSelectionModifier"
+                                                        @keydown="captureRangeSelectionModifier"
+                                                        @update:model-value="setRowSelection(rowIndex, !!$event)" />
                                         </td>
                                         <td>{{ duplicateInfo[transaction.index]?.rowNumber }}</td>
                                         <td>{{ getDisplayDateTime(transaction) }}</td>
@@ -231,8 +245,17 @@ const totalRowCount = ref<number>(0);
 const duplicateRowCount = ref<number>(0);
 const importedCount = ref<number | undefined>(undefined);
 
+// Shift-click range selection needs the modifier state from the pointer/key event, because
+// v-checkbox's update:model-value only carries the new value. Both are plain (non-reactive)
+// variables on purpose - nothing in the template renders them.
+let rangeSelectionModifierPressed: boolean = false;
+let lastToggledRowIndex: number | null = null;
+
 const readyToImportCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid && transaction.selected).length);
 const invalidRowCount = computed<number>(() => importTransactions.value.filter(transaction => !transaction.valid).length);
+const selectableRowCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid).length);
+const allSelectableRowsSelected = computed<boolean>(() => selectableRowCount.value > 0 && readyToImportCount.value === selectableRowCount.value);
+const someSelectableRowsSelected = computed<boolean>(() => readyToImportCount.value > 0 && readyToImportCount.value < selectableRowCount.value);
 
 const sortedUrlHistory = computed<GoogleSheetImportUrlHistoryEntry[]>(() => {
     return settingsStore.getGoogleSheetImportUrlHistory()
@@ -279,6 +302,8 @@ function open(): Promise<void> {
     duplicateRowCount.value = 0;
     importedCount.value = undefined;
     clientSessionId.value = generateRandomUUID();
+    rangeSelectionModifierPressed = false;
+    lastToggledRowIndex = null;
     showState.value = true;
 
     return new Promise((resolve, reject) => {
@@ -316,6 +341,8 @@ function fetchSheet(): void {
 
         importTransactions.value = transactions;
         duplicateInfo.value = info;
+        rangeSelectionModifierPressed = false;
+        lastToggledRowIndex = null;
         totalRowCount.value = response.totalRowCount;
         duplicateRowCount.value = response.duplicateRowCount;
         currentStep.value = 'checkData';
@@ -327,6 +354,43 @@ function fetchSheet(): void {
             snackbar.value?.showError(error);
         }
     });
+}
+
+function captureRangeSelectionModifier(event: MouseEvent | KeyboardEvent): void {
+    rangeSelectionModifierPressed = event.shiftKey;
+}
+
+function setRowSelection(rowIndex: number, selected: boolean): void {
+    let startIndex = rowIndex;
+    let endIndex = rowIndex;
+
+    if (rangeSelectionModifierPressed && lastToggledRowIndex !== null) {
+        startIndex = Math.min(lastToggledRowIndex, rowIndex);
+        endIndex = Math.max(lastToggledRowIndex, rowIndex);
+    }
+
+    for (let i = startIndex; i <= endIndex; i++) {
+        const transaction = importTransactions.value[i];
+
+        // invalid rows can never be imported, so they stay unselected even inside a range
+        if (transaction && transaction.valid) {
+            transaction.selected = selected;
+        }
+    }
+
+    rangeSelectionModifierPressed = false;
+    lastToggledRowIndex = rowIndex;
+}
+
+function setAllRowsSelection(selected: boolean): void {
+    for (const transaction of importTransactions.value) {
+        if (transaction.valid) {
+            transaction.selected = selected;
+        }
+    }
+
+    rangeSelectionModifierPressed = false;
+    lastToggledRowIndex = null;
 }
 
 function getDisplayDateTime(transaction: ImportTransaction): string {
