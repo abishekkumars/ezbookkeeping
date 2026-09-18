@@ -1,5 +1,5 @@
 <template>
-    <asset-summary-widget :loading="loading" :height="widget.settings['height'] as number"
+    <asset-summary-widget scene="overview" :loading="loading" :height="widget.settings['height'] as number"
                           :light-background-color="widget.settings['lightBackgroundColor'] as ColorValue"
                           :dark-background-color="widget.settings['darkBackgroundColor'] as ColorValue"
                           v-if="widget.type === OverviewWidgetType.AssetSummary" />
@@ -10,6 +10,7 @@
                                  :item-count="widget.settings['itemCount'] as number"
                                  :sort-by="widget.settings['sortBy'] as string"
                                  :always-show-amount="widget.settings['alwaysShowAmount'] as boolean"
+                                 :show-available-credit-for-credit-card="widget.settings['showAvailableCreditForCreditCard'] as boolean"
                                  v-else-if="widget.type === OverviewWidgetType.AccountBalanceList" />
 
     <monthly-expense-overview-widget :loading="loading" :height="widget.settings['height'] as number"

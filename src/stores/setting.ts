@@ -420,6 +420,12 @@ export const useSettingsStore = defineStore('settings', () => {
         updateUserApplicationCloudSettingValue('hideCategoriesWithoutAccounts', value);
     }
 
+    function setDefaultCreditCardAmountDisplayTypeInMobile(value: number): void {
+        updateApplicationSettingsValue('defaultCreditCardAmountDisplayTypeInMobile', value);
+        appSettings.value.defaultCreditCardAmountDisplayTypeInMobile = value;
+        updateUserApplicationCloudSettingValue('defaultCreditCardAmountDisplayTypeInMobile', value);
+    }
+
     function setReconciliationStatementButtonDefaultDateRangeTypeInDesktop(value: number): void {
         updateApplicationSettingsValue('reconciliationStatementButtonDefaultDateRangeTypeInDesktop', value);
         appSettings.value.reconciliationStatementButtonDefaultDateRangeTypeInDesktop = value;
@@ -693,6 +699,7 @@ export const useSettingsStore = defineStore('settings', () => {
         // -- Account List Page
         setTotalAmountExcludeAccountIds,
         setHideCategoriesWithoutAccounts,
+        setDefaultCreditCardAmountDisplayTypeInMobile,
         setReconciliationStatementButtonDefaultDateRangeTypeInDesktop,
         setReconciliationStatementPageDefaultDateRangeTypeInMobile,
         // -- Exchange Rates Data Page
