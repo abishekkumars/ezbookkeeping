@@ -16,7 +16,10 @@ WORKDIR /go/src/github.com/mayswind/ezbookkeeping
 COPY . .
 RUN docker/backend-build-pre-setup.sh
 RUN apk add git gcc g++ libc-dev
-RUN ./build.sh backend
+# Fork-local: skip the Go unit suite on deploy builds. Render is a deploy
+# pipeline, not CI; this branch carries no Go changes vs upstream, and
+# build.sh runs "go clean -cache" first, forcing a ~300s full recompile.
+RUN ./build.sh backend --no-test
 
 # Build frontend files
 FROM --platform=$BUILDPLATFORM node:26.8.1-alpine3.24 AS fe-builder
