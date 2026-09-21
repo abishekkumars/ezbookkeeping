@@ -636,6 +636,15 @@ func (s *TransactionService) CreateTransaction(c core.Context, transaction *mode
 
 // BatchCreateTransactions saves new transactions to database
 func (s *TransactionService) BatchCreateTransactions(c core.Context, uid int64, transactions []*models.Transaction, allTagIds map[int][]int64, processHandler core.TaskProcessUpdateHandler) error {
+	return s.BatchCreateTransactionsWithPostHandler(c, uid, transactions, allTagIds, processHandler, nil)
+}
+
+// BatchCreateTransactionsWithPostHandler saves all transactions like BatchCreateTransactions, and
+// additionally runs postCreateHandler inside the same database transaction once every transaction
+// has been written. Callers use it to persist bookkeeping of their own (such as Google Sheet import
+// records) atomically with the transactions - if the handler fails, the whole import rolls back.
+// The transaction ids are already assigned by the time the handler runs.
+func (s *TransactionService) BatchCreateTransactionsWithPostHandler(c core.Context, uid int64, transactions []*models.Transaction, allTagIds map[int][]int64, processHandler core.TaskProcessUpdateHandler, postCreateHandler func(sess *xorm.Session) error) error {
 	now := time.Now().Unix()
 	currentProcess := float64(0)
 	processUpdateStep := int(math.Max(100.0, float64(len(transactions)/100.0)))
@@ -756,6 +765,10 @@ func (s *TransactionService) BatchCreateTransactions(c core.Context, uid int64, 
 				log.Errorf(c, "[transactions.BatchCreateTransactions] failed to create trasaction (datetime: %s, type: %s, amount: %d)", utils.FormatUnixTimeToLongDateTime(transactionUnixTime, transactionTimeZone), transaction.Type, transaction.Amount)
 				return err
 			}
+		}
+
+		if postCreateHandler != nil {
+			return postCreateHandler(sess)
 		}
 
 		return nil

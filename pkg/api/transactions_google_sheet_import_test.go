@@ -1,10 +1,12 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mayswind/ezbookkeeping/pkg/errs"
 	"github.com/mayswind/ezbookkeeping/pkg/models"
 	"github.com/mayswind/ezbookkeeping/pkg/utils"
 )
@@ -20,55 +22,67 @@ func newTestGoogleSheetImportItem(transactionTime int64, categoryId int64, accou
 	}
 }
 
-func TestMarkInSheetDuplicates_NoDuplicates(t *testing.T) {
+func occurrencesOf(rowKeys []googleSheetRowKey) []int32 {
+	occurrences := make([]int32, len(rowKeys))
+
+	for i := 0; i < len(rowKeys); i++ {
+		occurrences[i] = rowKeys[i].occurrence
+	}
+
+	return occurrences
+}
+
+func TestComputeGoogleSheetRowKeys_NoDuplicates(t *testing.T) {
 	items := []*models.ImportTransactionResponse{
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 		newTestGoogleSheetImportItem(2000, 1, 1, 200, "dinner"),
 		newTestGoogleSheetImportItem(3000, 2, 1, 300, "groceries"),
 	}
 
-	actualValue := markInSheetDuplicates(items)
+	actualValue := computeGoogleSheetRowKeys(items)
 
-	assert.Empty(t, actualValue)
+	assert.Equal(t, []int32{0, 0, 0}, occurrencesOf(actualValue))
+	assert.NotEqual(t, actualValue[0].hash, actualValue[1].hash)
+	assert.NotEqual(t, actualValue[1].hash, actualValue[2].hash)
 }
 
-func TestMarkInSheetDuplicates_ExactDuplicateRow(t *testing.T) {
+func TestComputeGoogleSheetRowKeys_ExactDuplicateRowGetsNextOccurrence(t *testing.T) {
 	items := []*models.ImportTransactionResponse{
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 	}
 
-	actualValue := markInSheetDuplicates(items)
+	actualValue := computeGoogleSheetRowKeys(items)
 
-	assert.Len(t, actualValue, 1)
-	assert.Equal(t, models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET, actualValue[1])
-	_, firstRowFlagged := actualValue[0]
-	assert.False(t, firstRowFlagged)
+	assert.Equal(t, actualValue[0].hash, actualValue[1].hash)
+	assert.Equal(t, []int32{0, 1}, occurrencesOf(actualValue))
 }
 
-func TestMarkInSheetDuplicates_DifferentAmountIsNotADuplicate(t *testing.T) {
+func TestComputeGoogleSheetRowKeys_DifferentAmountIsNotADuplicate(t *testing.T) {
 	items := []*models.ImportTransactionResponse{
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 		newTestGoogleSheetImportItem(1000, 1, 1, 150, "lunch"),
 	}
 
-	actualValue := markInSheetDuplicates(items)
+	actualValue := computeGoogleSheetRowKeys(items)
 
-	assert.Empty(t, actualValue)
+	assert.NotEqual(t, actualValue[0].hash, actualValue[1].hash)
+	assert.Equal(t, []int32{0, 0}, occurrencesOf(actualValue))
 }
 
-func TestMarkInSheetDuplicates_DifferentCommentIsNotADuplicate(t *testing.T) {
+func TestComputeGoogleSheetRowKeys_DifferentCommentIsNotADuplicate(t *testing.T) {
 	items := []*models.ImportTransactionResponse{
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "dinner"),
 	}
 
-	actualValue := markInSheetDuplicates(items)
+	actualValue := computeGoogleSheetRowKeys(items)
 
-	assert.Empty(t, actualValue)
+	assert.NotEqual(t, actualValue[0].hash, actualValue[1].hash)
+	assert.Equal(t, []int32{0, 0}, occurrencesOf(actualValue))
 }
 
-func TestMarkInSheetDuplicates_MultipleDuplicatesOfSameRow(t *testing.T) {
+func TestComputeGoogleSheetRowKeys_MultipleDuplicatesOfSameRowCountUpIndependently(t *testing.T) {
 	items := []*models.ImportTransactionResponse{
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 		newTestGoogleSheetImportItem(2000, 1, 1, 200, "dinner"),
@@ -76,17 +90,101 @@ func TestMarkInSheetDuplicates_MultipleDuplicatesOfSameRow(t *testing.T) {
 		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
 	}
 
-	actualValue := markInSheetDuplicates(items)
+	actualValue := computeGoogleSheetRowKeys(items)
 
-	assert.Len(t, actualValue, 2)
-	assert.Equal(t, models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET, actualValue[2])
-	assert.Equal(t, models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET, actualValue[3])
+	assert.Equal(t, []int32{0, 0, 1, 2}, occurrencesOf(actualValue))
 }
 
-func TestMarkInSheetDuplicates_EmptyItems(t *testing.T) {
-	actualValue := markInSheetDuplicates([]*models.ImportTransactionResponse{})
+func TestComputeGoogleSheetRowKeys_EmptyItems(t *testing.T) {
+	actualValue := computeGoogleSheetRowKeys([]*models.ImportTransactionResponse{})
 
 	assert.Empty(t, actualValue)
+}
+
+func TestGoogleSheetRowHash_IsFixedLengthRegardlessOfCommentLength(t *testing.T) {
+	// The hash is stored in a bounded database column, so a very long description must not overflow
+	// it - and a truncated description must not collide with the untruncated one.
+	shortHash := googleSheetRowHash(models.TRANSACTION_TYPE_EXPENSE, 1000, 1, 1, 100, "lunch")
+	longHash := googleSheetRowHash(models.TRANSACTION_TYPE_EXPENSE, 1000, 1, 1, 100, strings.Repeat("a", 4096))
+
+	assert.Len(t, shortHash, 64)
+	assert.Len(t, longHash, 64)
+	assert.NotEqual(t, shortHash, longHash)
+}
+
+func TestGoogleSheetRowKeyString_SameHashDifferentOccurrenceAreDistinct(t *testing.T) {
+	hash := googleSheetRowHash(models.TRANSACTION_TYPE_EXPENSE, 1000, 1, 1, 100, "lunch")
+
+	assert.NotEqual(t, googleSheetRowKeyString(hash, 0), googleSheetRowKeyString(hash, 1))
+}
+
+func TestValidateGoogleSheetImportSource(t *testing.T) {
+	assert.Nil(t, validateGoogleSheetImportSource(nil, 3))
+
+	validSource := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		Gid:           "0",
+		RowKeys: []*models.GoogleSheetImportRowKey{
+			{RowHash: "hash-a", Occurrence: 0},
+			{RowHash: "hash-a", Occurrence: 1},
+		},
+	}
+
+	assert.Nil(t, validateGoogleSheetImportSource(validSource, 2))
+	assert.Equal(t, errs.ErrGoogleSheetImportRowKeysInvalid, validateGoogleSheetImportSource(validSource, 1))
+
+	emptyHashSource := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: "", Occurrence: 0}},
+	}
+
+	assert.Equal(t, errs.ErrGoogleSheetImportRowKeysInvalid, validateGoogleSheetImportSource(emptyHashSource, 1))
+
+	nilRowKeySource := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		RowKeys:       []*models.GoogleSheetImportRowKey{nil},
+	}
+
+	assert.Equal(t, errs.ErrGoogleSheetImportRowKeysInvalid, validateGoogleSheetImportSource(nilRowKeySource, 1))
+}
+
+func TestBuildGoogleSheetImportRecords_PairsEachTransactionWithItsRow(t *testing.T) {
+	source := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		Gid:           "7",
+		RowKeys: []*models.GoogleSheetImportRowKey{
+			{RowHash: "hash-a", Occurrence: 0},
+			{RowHash: "hash-a", Occurrence: 1},
+		},
+	}
+
+	transactions := []*models.Transaction{
+		{TransactionId: 11},
+		{TransactionId: 22},
+	}
+
+	actualValue := buildGoogleSheetImportRecords(1234, source, transactions, 99)
+
+	assert.Len(t, actualValue, 2)
+	assert.Equal(t, int64(11), actualValue[0].TransactionId)
+	assert.Equal(t, int64(22), actualValue[1].TransactionId)
+	assert.Equal(t, int64(1234), actualValue[0].Uid)
+	assert.Equal(t, "sheet-id", actualValue[0].SpreadsheetId)
+	assert.Equal(t, "7", actualValue[0].Gid)
+	assert.Equal(t, "hash-a", actualValue[0].RowHash)
+	assert.Equal(t, int32(0), actualValue[0].Occurrence)
+	assert.Equal(t, int32(1), actualValue[1].Occurrence)
+	assert.Equal(t, int64(99), actualValue[0].ImportedUnixTime)
+}
+
+func TestBuildGoogleSheetImportRecords_ReturnsNothingWhenCountsDoNotLineUp(t *testing.T) {
+	source := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: "hash-a"}},
+	}
+
+	assert.Nil(t, buildGoogleSheetImportRecords(1234, source, []*models.Transaction{{TransactionId: 11}, {TransactionId: 22}}, 99))
+	assert.Nil(t, buildGoogleSheetImportRecords(1234, nil, []*models.Transaction{{TransactionId: 11}}, 99))
 }
 
 func TestGoogleSheetDuplicateKey_DistinctInputsProduceDistinctKeys(t *testing.T) {

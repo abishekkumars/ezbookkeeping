@@ -36,7 +36,8 @@ import {
     ImportTransaction
 } from '@/models/imported_transaction.ts';
 import type {
-    GoogleSheetImportPreviewResponse
+    GoogleSheetImportPreviewResponse,
+    GoogleSheetImportSource
 } from '@/models/google_sheet_import.ts';
 import {
     type ExportTransactionDataRequest
@@ -1609,7 +1610,7 @@ export const useTransactionsStore = defineStore('transactions', () => {
         });
     }
 
-    function importTransactions({ transactions, clientSessionId }: { transactions: ImportTransaction[], clientSessionId: string }): Promise<number> {
+    function importTransactions({ transactions, clientSessionId, googleSheetImport }: { transactions: ImportTransaction[], clientSessionId: string, googleSheetImport?: GoogleSheetImportSource }): Promise<number> {
         const submitTransactions: TransactionCreateRequest[] = [];
 
         if (transactions) {
@@ -1622,7 +1623,8 @@ export const useTransactionsStore = defineStore('transactions', () => {
         return new Promise((resolve, reject) => {
             services.importTransactions({
                 transactions: submitTransactions,
-                clientSessionId: clientSessionId
+                clientSessionId: clientSessionId,
+                googleSheetImport: googleSheetImport
             }).then(response => {
                 const data = response.data;
 

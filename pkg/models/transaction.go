@@ -201,6 +201,9 @@ type TransactionModifyRequest struct {
 type TransactionImportRequest struct {
 	Transactions    []*TransactionCreateRequest `json:"transactions"`
 	ClientSessionId string                      `json:"clientSessionId"`
+	// GoogleSheetImport is set only when the import came from a Google Sheet, so each imported row
+	// can be recorded against its source sheet. It is absent for every other import source.
+	GoogleSheetImport *GoogleSheetImportSource `json:"googleSheetImport,omitempty"`
 }
 
 // TransactionImportProcessRequest represents all parameters of transaction import process request

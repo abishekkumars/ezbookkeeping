@@ -181,5 +181,13 @@ func updateAllDatabaseTablesStructure(c *core.CliContext) error {
 
 	log.BootInfof(c, "[database.updateAllDatabaseTablesStructure] insights explorer table maintained successfully")
 
+	err = datastore.Container.UserDataStore.SyncStructs(new(models.GoogleSheetImportRecord))
+
+	if err != nil {
+		return err
+	}
+
+	log.BootInfof(c, "[database.updateAllDatabaseTablesStructure] google sheet import record table maintained successfully")
+
 	return nil
 }

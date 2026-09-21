@@ -10,17 +10,38 @@ type GoogleSheetDuplicateReason string
 
 // Google Sheet duplicate reasons
 const (
-	GOOGLE_SHEET_DUPLICATE_REASON_NONE               GoogleSheetDuplicateReason = ""
-	GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET            GoogleSheetDuplicateReason = "in_sheet"
+	GOOGLE_SHEET_DUPLICATE_REASON_NONE                 GoogleSheetDuplicateReason = ""
+	GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED     GoogleSheetDuplicateReason = "already_imported"
+	GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET             GoogleSheetDuplicateReason = "in_sheet"
 	GOOGLE_SHEET_DUPLICATE_REASON_EXISTING_TRANSACTION GoogleSheetDuplicateReason = "existing_transaction"
 )
 
+// GoogleSheetImportRowKey identifies one row of a Google Sheet for import-record purposes.
+// RowHash is the hashed content fingerprint and Occurrence distinguishes rows within the same sheet
+// that share it.
+type GoogleSheetImportRowKey struct {
+	RowHash    string `json:"rowHash" binding:"required,max=64"`
+	Occurrence int32  `json:"occurrence" binding:"min=0"`
+}
+
+// GoogleSheetImportSource identifies the Google Sheet an import came from, so each imported row can
+// be recorded and recognized on a later import of the same sheet. RowKeys is positional: RowKeys[i]
+// describes the same row as Transactions[i] in the enclosing import request.
+type GoogleSheetImportSource struct {
+	SpreadsheetId string                     `json:"spreadsheetId" binding:"required,max=128"`
+	Gid           string                     `json:"gid" binding:"max=32"`
+	RowKeys       []*GoogleSheetImportRowKey `json:"rowKeys"`
+}
+
 // GoogleSheetImportPreviewItem represents a single parsed transaction row in a Google Sheet import preview,
-// annotated with its row number and whether it looks like a duplicate
+// annotated with its row number, its row key and whether it looks like a duplicate
 type GoogleSheetImportPreviewItem struct {
 	*ImportTransactionResponse
 	RowNumber       int                        `json:"rowNumber"`
+	RowHash         string                     `json:"rowHash"`
+	Occurrence      int32                      `json:"occurrence"`
 	IsDuplicate     bool                       `json:"isDuplicate"`
+	AlreadyImported bool                       `json:"alreadyImported"`
 	DuplicateReason GoogleSheetDuplicateReason `json:"duplicateReason,omitempty"`
 }
 
@@ -28,9 +49,14 @@ type GoogleSheetImportPreviewItem struct {
 type GoogleSheetImportPreviewResponse struct {
 	// SpreadsheetName and SheetName are best-effort display names parsed from the Google Sheets
 	// export response; either may be empty if Google didn't provide them in a recognized shape.
-	SpreadsheetName   string                          `json:"spreadsheetName,omitempty"`
-	SheetName         string                          `json:"sheetName,omitempty"`
-	TotalRowCount     int64                           `json:"totalRowCount"`
-	DuplicateRowCount int64                           `json:"duplicateRowCount"`
-	Items             []*GoogleSheetImportPreviewItem `json:"items"`
+	SpreadsheetName string `json:"spreadsheetName,omitempty"`
+	SheetName       string `json:"sheetName,omitempty"`
+	// SpreadsheetId and Gid identify the sheet, and are echoed back so the confirm request can
+	// record which sheet each imported row came from.
+	SpreadsheetId           string                          `json:"spreadsheetId"`
+	Gid                     string                          `json:"gid"`
+	TotalRowCount           int64                           `json:"totalRowCount"`
+	DuplicateRowCount       int64                           `json:"duplicateRowCount"`
+	AlreadyImportedRowCount int64                           `json:"alreadyImportedRowCount"`
+	Items                   []*GoogleSheetImportPreviewItem `json:"items"`
 }

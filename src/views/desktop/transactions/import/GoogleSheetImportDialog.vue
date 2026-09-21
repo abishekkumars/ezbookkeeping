@@ -89,8 +89,14 @@
                             <v-alert type="warning" variant="tonal" density="compact" class="mb-3" v-if="invalidRowCount > 0">
                                 {{ tt('Rows with an unresolved account or category cannot be imported. Fix the sheet and fetch it again.') }}
                             </v-alert>
-                            <div class="text-caption text-medium-emphasis mb-2">
-                                {{ tt('Use the checkbox in the header to select or unselect every row, or hold Shift while clicking a checkbox to select a range of rows.') }}
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <div class="text-caption text-medium-emphasis">
+                                    {{ tt('Use the checkbox in the header to select or unselect every row, or hold Shift while clicking a checkbox to select a range of rows.') }}
+                                </div>
+                                <v-checkbox density="compact" hide-details class="flex-grow-0 ms-4"
+                                            :label="tt('format.misc.googleSheetRowsAlreadyImported', { count: formatNumberToLocalizedNumerals(alreadyImportedRowCount) })"
+                                            v-model="showAlreadyImportedRows"
+                                            v-if="alreadyImportedRowCount > 0" />
                             </div>
                             <v-table density="compact" fixed-header height="420" class="google-sheet-import-table">
                                 <thead>
@@ -115,7 +121,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr :key="transaction.index" v-for="(transaction, rowIndex) in importTransactions">
+                                    <tr :key="transaction.index" v-for="(transaction, rowIndex) in visibleTransactions">
                                         <td>
                                             <v-checkbox density="compact"
                                                         :color="!transaction.valid ? 'error' : 'primary'"
@@ -138,7 +144,11 @@
                                         <td class="text-right">{{ getDisplayAmount(transaction) }}</td>
                                         <td>{{ transaction.comment }}</td>
                                         <td>
-                                            <template v-if="duplicateInfo[transaction.index]?.isDuplicate">
+                                            <template v-if="duplicateInfo[transaction.index]?.alreadyImported">
+                                                <v-chip size="x-small" color="info" variant="flat">{{ tt('Already Imported') }}</v-chip>
+                                                <v-tooltip activator="parent">{{ tt('This row was already imported from this sheet') }}</v-tooltip>
+                                            </template>
+                                            <template v-else-if="duplicateInfo[transaction.index]?.isDuplicate">
                                                 <v-chip size="x-small" color="warning" variant="flat">{{ tt('Duplicate') }}</v-chip>
                                                 <v-tooltip activator="parent">{{ duplicateInfo[transaction.index]?.duplicateReason === 'existing_transaction' ? tt('Duplicate of an existing transaction') : tt('Duplicate row already in this sheet') }}</v-tooltip>
                                             </template>
@@ -180,6 +190,7 @@ import { useSettingsStore } from '@/stores/setting.ts';
 
 import { TransactionType } from '@/core/transaction.ts';
 import type { GoogleSheetImportUrlHistoryEntry } from '@/core/setting.ts';
+import type { GoogleSheetImportRowKey } from '@/models/google_sheet_import.ts';
 import { ImportTransaction } from '@/models/imported_transaction.ts';
 
 import { isNumber } from '@/lib/common.ts';
@@ -205,7 +216,10 @@ type GoogleSheetImportDialogStep = 'enterUrl' | 'checkData' | 'finalResult';
 
 interface GoogleSheetDuplicateInfo {
     rowNumber: number;
+    rowHash: string;
+    occurrence: number;
     isDuplicate: boolean;
+    alreadyImported: boolean;
     duplicateReason?: string;
 }
 
@@ -243,6 +257,10 @@ const importTransactions = ref<ImportTransaction[]>([]);
 const duplicateInfo = ref<Record<number, GoogleSheetDuplicateInfo>>({});
 const totalRowCount = ref<number>(0);
 const duplicateRowCount = ref<number>(0);
+const alreadyImportedRowCount = ref<number>(0);
+const showAlreadyImportedRows = ref<boolean>(false);
+const spreadsheetId = ref<string>('');
+const sheetGid = ref<string>('');
 const importedCount = ref<number | undefined>(undefined);
 
 // Shift-click range selection needs the modifier state from the pointer/key event, because
@@ -253,9 +271,25 @@ let lastToggledRowIndex: number | null = null;
 
 const readyToImportCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid && transaction.selected).length);
 const invalidRowCount = computed<number>(() => importTransactions.value.filter(transaction => !transaction.valid).length);
-const selectableRowCount = computed<number>(() => importTransactions.value.filter(transaction => transaction.valid).length);
-const allSelectableRowsSelected = computed<boolean>(() => selectableRowCount.value > 0 && readyToImportCount.value === selectableRowCount.value);
-const someSelectableRowsSelected = computed<boolean>(() => readyToImportCount.value > 0 && readyToImportCount.value < selectableRowCount.value);
+
+// Rows that were already imported from this sheet are hidden by default - they are already in the
+// books, so re-listing them every time is just noise. They stay one checkbox away for the case where
+// the user genuinely wants to import the same row again.
+const visibleTransactions = computed<ImportTransaction[]>(() => {
+    if (showAlreadyImportedRows.value) {
+        return importTransactions.value;
+    }
+
+    return importTransactions.value.filter(transaction => !duplicateInfo.value[transaction.index]?.alreadyImported);
+});
+
+// Select all and shift-range act on what the user can actually see, so hidden rows are never
+// selected behind their back.
+const selectableVisibleTransactions = computed<ImportTransaction[]>(() => visibleTransactions.value.filter(transaction => transaction.valid));
+const selectedVisibleRowCount = computed<number>(() => selectableVisibleTransactions.value.filter(transaction => transaction.selected).length);
+const selectableRowCount = computed<number>(() => selectableVisibleTransactions.value.length);
+const allSelectableRowsSelected = computed<boolean>(() => selectableRowCount.value > 0 && selectedVisibleRowCount.value === selectableRowCount.value);
+const someSelectableRowsSelected = computed<boolean>(() => selectedVisibleRowCount.value > 0 && selectedVisibleRowCount.value < selectableRowCount.value);
 
 const sortedUrlHistory = computed<GoogleSheetImportUrlHistoryEntry[]>(() => {
     return settingsStore.getGoogleSheetImportUrlHistory()
@@ -300,6 +334,10 @@ function open(): Promise<void> {
     duplicateInfo.value = {};
     totalRowCount.value = 0;
     duplicateRowCount.value = 0;
+    alreadyImportedRowCount.value = 0;
+    showAlreadyImportedRows.value = false;
+    spreadsheetId.value = '';
+    sheetGid.value = '';
     importedCount.value = undefined;
     clientSessionId.value = generateRandomUUID();
     rangeSelectionModifierPressed = false;
@@ -334,7 +372,10 @@ function fetchSheet(): void {
             transactions.push(transaction);
             info[transaction.index] = {
                 rowNumber: item.rowNumber,
+                rowHash: item.rowHash,
+                occurrence: item.occurrence,
                 isDuplicate: item.isDuplicate,
+                alreadyImported: item.alreadyImported,
                 duplicateReason: item.duplicateReason
             };
         }
@@ -345,6 +386,10 @@ function fetchSheet(): void {
         lastToggledRowIndex = null;
         totalRowCount.value = response.totalRowCount;
         duplicateRowCount.value = response.duplicateRowCount;
+        alreadyImportedRowCount.value = response.alreadyImportedRowCount;
+        showAlreadyImportedRows.value = false;
+        spreadsheetId.value = response.spreadsheetId;
+        sheetGid.value = response.gid;
         currentStep.value = 'checkData';
         settingsStore.addGoogleSheetImportUrlToHistory(trimmedUrl, getGoogleSheetDisplayName(response.spreadsheetName, response.sheetName));
     }).catch(error => {
@@ -370,7 +415,7 @@ function setRowSelection(rowIndex: number, selected: boolean): void {
     }
 
     for (let i = startIndex; i <= endIndex; i++) {
-        const transaction = importTransactions.value[i];
+        const transaction = visibleTransactions.value[i];
 
         // invalid rows can never be imported, so they stay unselected even inside a range
         if (transaction && transaction.valid) {
@@ -383,10 +428,8 @@ function setRowSelection(rowIndex: number, selected: boolean): void {
 }
 
 function setAllRowsSelection(selected: boolean): void {
-    for (const transaction of importTransactions.value) {
-        if (transaction.valid) {
-            transaction.selected = selected;
-        }
+    for (const transaction of selectableVisibleTransactions.value) {
+        transaction.selected = selected;
     }
 
     rangeSelectionModifierPressed = false;
@@ -403,10 +446,18 @@ function getDisplayAmount(transaction: ImportTransaction): string {
 
 function submit(): void {
     const transactions: ImportTransaction[] = [];
+    // rowKeys is positional against transactions, so the server can record which sheet row created
+    // each transaction and recognize it on a later import of the same sheet
+    const rowKeys: GoogleSheetImportRowKey[] = [];
 
     for (const transaction of importTransactions.value) {
         if (transaction.valid && transaction.selected) {
+            const info = duplicateInfo.value[transaction.index];
             transactions.push(transaction);
+            rowKeys.push({
+                rowHash: info?.rowHash ?? '',
+                occurrence: info?.occurrence ?? 0
+            });
         }
     }
 
@@ -453,7 +504,12 @@ function submit(): void {
 
         transactionsStore.importTransactions({
             transactions: transactions,
-            clientSessionId: clientSessionId.value
+            clientSessionId: clientSessionId.value,
+            googleSheetImport: spreadsheetId.value ? {
+                spreadsheetId: spreadsheetId.value,
+                gid: sheetGid.value,
+                rowKeys: rowKeys
+            } : undefined
         }).then(response => {
             if (showProcessTimer) {
                 importProcess.value = 0;

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	orderedmap "github.com/wk8/go-ordered-map/v2"
+	"xorm.io/xorm"
 
 	"github.com/mayswind/ezbookkeeping/pkg/converters"
 	"github.com/mayswind/ezbookkeeping/pkg/converters/converter"
@@ -39,6 +40,8 @@ type TransactionsApi struct {
 	transactionPictures   *services.TransactionPictureService
 	accounts              *services.AccountService
 	users                 *services.UserService
+
+	googleSheetImportRecords *services.GoogleSheetImportRecordService
 }
 
 // Initialize a transaction api singleton instance
@@ -59,6 +62,8 @@ var (
 		transactionPictures:   services.TransactionPictures,
 		accounts:              services.Accounts,
 		users:                 services.Users,
+
+		googleSheetImportRecords: services.GoogleSheetImportRecords,
 	}
 )
 
@@ -2830,9 +2835,34 @@ func (a *TransactionsApi) TransactionImportHandler(c *core.WebContext) (any, *er
 		}
 	}
 
-	err = a.transactions.BatchCreateTransactions(c, user.Uid, newTransactions, newTransactionTagIdsMap, func(currentProcess float64) {
+	// When the import came from a Google Sheet, record which sheet row created each transaction, in
+	// the same database transaction - so a later import of the same sheet can tell those rows apart
+	// from genuinely new ones instead of guessing from transaction content.
+	var googleSheetImportRecordHandler func(sess *xorm.Session) error
+
+	if transactionImportReq.GoogleSheetImport != nil {
+		googleSheetImportConfig := a.CurrentConfig().GoogleSheetImportConfig
+
+		if googleSheetImportConfig == nil || !googleSheetImportConfig.Enabled {
+			return nil, errs.ErrGoogleSheetImportNotEnabled
+		}
+
+		if sourceErr := validateGoogleSheetImportSource(transactionImportReq.GoogleSheetImport, len(newTransactions)); sourceErr != nil {
+			log.Warnf(c, "[transactions.TransactionImportHandler] google sheet import source is invalid for user \"uid:%d\"", uid)
+			return nil, sourceErr
+		}
+
+		googleSheetImportSource := transactionImportReq.GoogleSheetImport
+
+		googleSheetImportRecordHandler = func(sess *xorm.Session) error {
+			records := buildGoogleSheetImportRecords(uid, googleSheetImportSource, newTransactions, time.Now().Unix())
+			return a.googleSheetImportRecords.BatchCreateImportRecordsInSession(sess, records)
+		}
+	}
+
+	err = a.transactions.BatchCreateTransactionsWithPostHandler(c, user.Uid, newTransactions, newTransactionTagIdsMap, func(currentProcess float64) {
 		a.SetSubmissionRemarkIfEnable(duplicatechecker.DUPLICATE_CHECKER_TYPE_IMPORT_TRANSACTIONS, uid, transactionImportReq.ClientSessionId, fmt.Sprintf("processing:%.2f", currentProcess))
-	})
+	}, googleSheetImportRecordHandler)
 	count := len(newTransactions)
 
 	if err != nil {

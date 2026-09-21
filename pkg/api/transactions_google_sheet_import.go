@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/mayswind/ezbookkeeping/pkg/converters"
@@ -85,47 +87,107 @@ func (a *TransactionsApi) TransactionParseGoogleSheetImportHandler(c *core.WebCo
 		return nil, previewErr
 	}
 
-	duplicateReasons := a.detectGoogleSheetDuplicates(c, uid, previewWrapper.Items)
+	rowKeys := computeGoogleSheetRowKeys(previewWrapper.Items)
+	duplicateReasons := a.detectGoogleSheetDuplicates(c, uid, sheetUrl.SpreadsheetId, sheetUrl.GID, previewWrapper.Items, rowKeys)
 	items := make([]*models.GoogleSheetImportPreviewItem, len(previewWrapper.Items))
 	duplicateCount := int64(0)
+	alreadyImportedCount := int64(0)
 
 	for i := 0; i < len(previewWrapper.Items); i++ {
 		reason := duplicateReasons[i]
 		isDuplicate := reason != models.GOOGLE_SHEET_DUPLICATE_REASON_NONE
+		alreadyImported := reason == models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED
 
 		if isDuplicate {
 			duplicateCount++
 		}
 
+		if alreadyImported {
+			alreadyImportedCount++
+		}
+
 		items[i] = &models.GoogleSheetImportPreviewItem{
 			ImportTransactionResponse: previewWrapper.Items[i],
 			RowNumber:                 i + 1,
+			RowHash:                   rowKeys[i].hash,
+			Occurrence:                rowKeys[i].occurrence,
 			IsDuplicate:               isDuplicate,
+			AlreadyImported:           alreadyImported,
 			DuplicateReason:           reason,
 		}
 	}
 
 	return &models.GoogleSheetImportPreviewResponse{
-		SpreadsheetName:   fetchResult.SpreadsheetName,
-		SheetName:         fetchResult.SheetName,
-		TotalRowCount:     previewWrapper.TotalCount,
-		DuplicateRowCount: duplicateCount,
-		Items:             items,
+		SpreadsheetName:         fetchResult.SpreadsheetName,
+		SheetName:               fetchResult.SheetName,
+		SpreadsheetId:           sheetUrl.SpreadsheetId,
+		Gid:                     sheetUrl.GID,
+		TotalRowCount:           previewWrapper.TotalCount,
+		DuplicateRowCount:       duplicateCount,
+		AlreadyImportedRowCount: alreadyImportedCount,
+		Items:                   items,
 	}, nil
 }
 
+// googleSheetRowKey identifies one parsed sheet row: hash is the content fingerprint, and occurrence
+// distinguishes rows within the same sheet that share it (0 for the first row carrying that hash).
+type googleSheetRowKey struct {
+	hash       string
+	occurrence int32
+}
+
+// computeGoogleSheetRowKeys is a pure, DB-independent function that assigns every parsed row its
+// content hash and the occurrence index of that hash within the sheet.
+func computeGoogleSheetRowKeys(items []*models.ImportTransactionResponse) []googleSheetRowKey {
+	rowKeys := make([]googleSheetRowKey, len(items))
+	occurrenceCounts := make(map[string]int32, len(items))
+
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		hash := googleSheetRowHash(item.Type, item.Time, item.CategoryId, item.SourceAccountId, item.SourceAmount, item.Comment)
+
+		rowKeys[i] = googleSheetRowKey{
+			hash:       hash,
+			occurrence: occurrenceCounts[hash],
+		}
+
+		occurrenceCounts[hash]++
+	}
+
+	return rowKeys
+}
+
 // detectGoogleSheetDuplicates returns a map from item index (within items) to the reason it was
-// flagged as a duplicate, checking both duplicates within the sheet itself and duplicates against the
-// user's existing transactions. There is no content-based duplicate detection anywhere else in
-// ezbookkeeping today, so this is necessarily new logic - kept intentionally small and scoped only to
-// this feature. It is a best-effort exact match on (type, time, category, account, amount, comment):
-// nothing is silently excluded because of it, every flagged row still appears in the preview for the
-// user to decide on before confirming the import.
-func (a *TransactionsApi) detectGoogleSheetDuplicates(c *core.WebContext, uid int64, items []*models.ImportTransactionResponse) map[int]models.GoogleSheetDuplicateReason {
-	duplicateReasons := markInSheetDuplicates(items)
+// flagged as a duplicate. Three checks run in decreasing order of confidence:
+//
+//  1. already imported - this exact sheet row was imported before and the transaction it created
+//     still exists. This is a recorded fact, not a guess.
+//  2. in sheet - the row repeats an earlier row of the same sheet.
+//  3. existing transaction - a transaction with the same content already exists. This is a
+//     best-effort exact match on (type, time, category, account, amount, comment), and it stops
+//     matching if the user edits the transaction afterwards - which is exactly why check 1 exists.
+//
+// Nothing is silently excluded: every flagged row is still returned in the preview, and the user
+// decides what to import.
+func (a *TransactionsApi) detectGoogleSheetDuplicates(c *core.WebContext, uid int64, spreadsheetId string, gid string, items []*models.ImportTransactionResponse, rowKeys []googleSheetRowKey) map[int]models.GoogleSheetDuplicateReason {
+	duplicateReasons := make(map[int]models.GoogleSheetDuplicateReason, len(items))
 
 	if len(items) < 1 {
 		return duplicateReasons
+	}
+
+	importedRowKeys, err := a.buildAlreadyImportedGoogleSheetRowKeys(c, uid, spreadsheetId, gid)
+
+	if err != nil {
+		log.Warnf(c, "[transactions_google_sheet_import.detectGoogleSheetDuplicates] failed to get import records for user \"uid:%d\", because %s", uid, err.Error())
+	}
+
+	for i := 0; i < len(items); i++ {
+		if importedRowKeys[googleSheetRowKeyString(rowKeys[i].hash, rowKeys[i].occurrence)] {
+			duplicateReasons[i] = models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED
+		} else if rowKeys[i].occurrence > 0 {
+			duplicateReasons[i] = models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET
+		}
 	}
 
 	existingKeys, err := a.buildExistingGoogleSheetDuplicateKeys(c, uid, items)
@@ -151,24 +213,62 @@ func (a *TransactionsApi) detectGoogleSheetDuplicates(c *core.WebContext, uid in
 	return duplicateReasons
 }
 
-// markInSheetDuplicates is a pure, DB-independent function that flags rows duplicating an earlier row
-// within the same parsed sheet, keyed on (type, time, category, account, amount, comment).
-func markInSheetDuplicates(items []*models.ImportTransactionResponse) map[int]models.GoogleSheetDuplicateReason {
-	duplicateReasons := make(map[int]models.GoogleSheetDuplicateReason, len(items))
-	seenKeys := make(map[string]bool, len(items))
+// buildAlreadyImportedGoogleSheetRowKeys returns the set of row keys of the specified sheet tab that
+// this user has already imported.
+//
+// A record only counts while the transaction it created still exists: if the user deleted that
+// transaction (individually, by clearing an account, or by clearing all data), the row must become
+// importable again. Records whose transaction is gone are pruned here, so this stays self-healing
+// without any of the delete paths needing to know about this table.
+func (a *TransactionsApi) buildAlreadyImportedGoogleSheetRowKeys(c *core.WebContext, uid int64, spreadsheetId string, gid string) (map[string]bool, error) {
+	records, err := a.googleSheetImportRecords.GetImportRecordsBySheet(c, uid, spreadsheetId, gid)
 
-	for i := 0; i < len(items); i++ {
-		item := items[i]
-		key := googleSheetDuplicateKey(item.Type, item.Time, item.CategoryId, item.SourceAccountId, item.SourceAmount, item.Comment)
+	if err != nil {
+		return nil, err
+	}
 
-		if seenKeys[key] {
-			duplicateReasons[i] = models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET
+	if len(records) < 1 {
+		return nil, nil
+	}
+
+	transactionIds := make([]int64, len(records))
+
+	for i := 0; i < len(records); i++ {
+		transactionIds[i] = records[i].TransactionId
+	}
+
+	existingTransactions, err := a.transactions.GetTransactionsByTransactionIds(c, uid, transactionIds)
+
+	if err != nil {
+		return nil, err
+	}
+
+	liveTransactionIds := make(map[int64]bool, len(existingTransactions))
+
+	for i := 0; i < len(existingTransactions); i++ {
+		liveTransactionIds[existingTransactions[i].TransactionId] = true
+	}
+
+	importedRowKeys := make(map[string]bool, len(records))
+	staleTransactionIds := make([]int64, 0, len(records))
+
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+
+		if liveTransactionIds[record.TransactionId] {
+			importedRowKeys[googleSheetRowKeyString(record.RowHash, record.Occurrence)] = true
 		} else {
-			seenKeys[key] = true
+			staleTransactionIds = append(staleTransactionIds, record.TransactionId)
 		}
 	}
 
-	return duplicateReasons
+	if len(staleTransactionIds) > 0 {
+		if pruneErr := a.googleSheetImportRecords.DeleteImportRecordsByTransactionIds(c, uid, staleTransactionIds); pruneErr != nil {
+			log.Warnf(c, "[transactions_google_sheet_import.buildAlreadyImportedGoogleSheetRowKeys] failed to prune %d stale import records for user \"uid:%d\", because %s", len(staleTransactionIds), uid, pruneErr.Error())
+		}
+	}
+
+	return importedRowKeys, nil
 }
 
 // buildExistingGoogleSheetDuplicateKeys queries the user's existing transactions within the time
@@ -202,6 +302,63 @@ func (a *TransactionsApi) buildExistingGoogleSheetDuplicateKeys(c *core.WebConte
 
 func googleSheetDuplicateKey(transactionType models.TransactionType, unixTime int64, categoryId int64, accountId int64, amount int64, comment string) string {
 	return fmt.Sprintf("%d|%d|%d|%d|%d|%s", transactionType, unixTime, categoryId, accountId, amount, comment)
+}
+
+// googleSheetRowHash hashes the duplicate key into a fixed-length fingerprint, so it fits a bounded
+// database column regardless of how long the row's description is.
+func googleSheetRowHash(transactionType models.TransactionType, unixTime int64, categoryId int64, accountId int64, amount int64, comment string) string {
+	sum := sha256.Sum256([]byte(googleSheetDuplicateKey(transactionType, unixTime, categoryId, accountId, amount, comment)))
+	return hex.EncodeToString(sum[:])
+}
+
+// googleSheetRowKeyString joins a row hash and its occurrence into a single map key
+func googleSheetRowKeyString(hash string, occurrence int32) string {
+	return fmt.Sprintf("%s|%d", hash, occurrence)
+}
+
+// validateGoogleSheetImportSource checks the Google Sheet source attached to an import request
+// before any transaction is created. RowKeys is positional, so it must line up exactly with the
+// submitted transactions.
+func validateGoogleSheetImportSource(source *models.GoogleSheetImportSource, transactionCount int) *errs.Error {
+	if source == nil {
+		return nil
+	}
+
+	if len(source.RowKeys) != transactionCount {
+		return errs.ErrGoogleSheetImportRowKeysInvalid
+	}
+
+	for i := 0; i < len(source.RowKeys); i++ {
+		if source.RowKeys[i] == nil || source.RowKeys[i].RowHash == "" || source.RowKeys[i].Occurrence < 0 {
+			return errs.ErrGoogleSheetImportRowKeysInvalid
+		}
+	}
+
+	return nil
+}
+
+// buildGoogleSheetImportRecords is a pure function that pairs each created transaction with the sheet
+// row it came from. It must run after the transaction ids have been assigned.
+func buildGoogleSheetImportRecords(uid int64, source *models.GoogleSheetImportSource, transactions []*models.Transaction, importedUnixTime int64) []*models.GoogleSheetImportRecord {
+	if source == nil || len(source.RowKeys) != len(transactions) {
+		return nil
+	}
+
+	records := make([]*models.GoogleSheetImportRecord, len(transactions))
+
+	for i := 0; i < len(transactions); i++ {
+		records[i] = &models.GoogleSheetImportRecord{
+			TransactionId:    transactions[i].TransactionId,
+			Uid:              uid,
+			SpreadsheetId:    source.SpreadsheetId,
+			Gid:              source.Gid,
+			RowHash:          source.RowKeys[i].RowHash,
+			Occurrence:       source.RowKeys[i].Occurrence,
+			ImportedUnixTime: importedUnixTime,
+		}
+	}
+
+	return records
 }
 
 // computeGoogleSheetDuplicateQueryBounds is a pure, DB-independent function that derives the
