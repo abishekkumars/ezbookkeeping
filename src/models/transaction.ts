@@ -11,6 +11,7 @@ import { Account, type AccountInfoResponse } from './account.ts';
 import { TransactionCategory, type TransactionCategoryInfoResponse } from './transaction_category.ts';
 import { TransactionTag, type TransactionTagInfoResponse } from './transaction_tag.ts';
 import { TransactionPicture, type TransactionPictureInfoBasicResponse } from './transaction_picture_info.ts';
+import type { GoogleSheetImportSource } from './google_sheet_import.ts';
 
 export class Transaction implements TransactionInfoResponse {
     public id: string;
@@ -606,6 +607,8 @@ export interface TransactionBatchDeleteRequest {
 export interface TransactionImportRequest {
     readonly transactions: TransactionCreateRequest[];
     readonly clientSessionId: string;
+    // Set only when importing from a Google Sheet, so each row can be recorded against its source sheet
+    readonly googleSheetImport?: GoogleSheetImportSource;
 }
 
 export interface TransactionListByMaxTimeRequest {
