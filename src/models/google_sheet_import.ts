@@ -3,7 +3,6 @@ import type { ImportTransactionResponse } from './imported_transaction.ts';
 export interface GoogleSheetImportPreviewItemResponse extends ImportTransactionResponse {
     readonly rowNumber: number;
     readonly rowHash: string;
-    readonly occurrence: number;
     readonly isDuplicate: boolean;
     readonly alreadyImported: boolean;
     readonly duplicateReason?: string;
@@ -20,10 +19,10 @@ export interface GoogleSheetImportPreviewResponse {
     readonly items: GoogleSheetImportPreviewItemResponse[];
 }
 
-// GoogleSheetImportRowKey identifies one sheet row, so the server can record that it was imported
+// GoogleSheetImportRowKey identifies one sheet row by its content fingerprint, so the server can
+// record that it was imported. The row's position among identical rows is assigned server-side.
 export interface GoogleSheetImportRowKey {
     readonly rowHash: string;
-    readonly occurrence: number;
 }
 
 // GoogleSheetImportSource is sent with an import confirmation so each created transaction can be

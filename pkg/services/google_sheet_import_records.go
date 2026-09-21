@@ -23,8 +23,13 @@ var (
 	}
 )
 
-// GetImportRecordsBySheet returns all import records of the specified sheet tab for the specified user
-func (s *GoogleSheetImportRecordService) GetImportRecordsBySheet(c core.Context, uid int64, spreadsheetId string, gid string) ([]*models.GoogleSheetImportRecord, error) {
+// GetImportRecordsBySpreadsheet returns all import records of the specified spreadsheet for the
+// specified user.
+//
+// The sheet tab id is deliberately not part of the filter: Google serves the same default tab whether
+// the url carries a gid or not, so the same rows can be recorded under an empty gid and looked up
+// under "0" (or the reverse) purely because of which url form the user pasted.
+func (s *GoogleSheetImportRecordService) GetImportRecordsBySpreadsheet(c core.Context, uid int64, spreadsheetId string) ([]*models.GoogleSheetImportRecord, error) {
 	if uid <= 0 {
 		return nil, errs.ErrUserIdInvalid
 	}
@@ -34,13 +39,37 @@ func (s *GoogleSheetImportRecordService) GetImportRecordsBySheet(c core.Context,
 	}
 
 	var records []*models.GoogleSheetImportRecord
-	err := s.UserDataDB(uid).NewSession(c).Where("uid=? AND spreadsheet_id=? AND gid=?", uid, spreadsheetId, gid).Find(&records)
+	err := s.UserDataDB(uid).NewSession(c).Where("uid=? AND spreadsheet_id=?", uid, spreadsheetId).Find(&records)
 
 	if err != nil {
 		return nil, err
 	}
 
 	return records, nil
+}
+
+// GetNextOccurrencesInSession returns, per row fingerprint, the next free occurrence value for the
+// specified spreadsheet, read within an existing session so it is consistent with the writes that
+// follow it in the same database transaction
+func (s *GoogleSheetImportRecordService) GetNextOccurrencesInSession(sess *xorm.Session, uid int64, spreadsheetId string) (map[string]int32, error) {
+	var records []*models.GoogleSheetImportRecord
+	err := sess.Where("uid=? AND spreadsheet_id=?", uid, spreadsheetId).Find(&records)
+
+	if err != nil {
+		return nil, err
+	}
+
+	nextOccurrences := make(map[string]int32, len(records))
+
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+
+		if record.Occurrence >= nextOccurrences[record.RowHash] {
+			nextOccurrences[record.RowHash] = record.Occurrence + 1
+		}
+	}
+
+	return nextOccurrences, nil
 }
 
 // BatchCreateImportRecordsInSession writes the specified import records within an existing database

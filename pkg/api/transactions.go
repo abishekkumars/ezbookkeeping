@@ -2855,7 +2855,13 @@ func (a *TransactionsApi) TransactionImportHandler(c *core.WebContext) (any, *er
 		googleSheetImportSource := transactionImportReq.GoogleSheetImport
 
 		googleSheetImportRecordHandler = func(sess *xorm.Session) error {
-			records := buildGoogleSheetImportRecords(uid, googleSheetImportSource, newTransactions, time.Now().Unix())
+			nextOccurrences, occurrenceErr := a.googleSheetImportRecords.GetNextOccurrencesInSession(sess, uid, googleSheetImportSource.SpreadsheetId)
+
+			if occurrenceErr != nil {
+				return occurrenceErr
+			}
+
+			records := buildGoogleSheetImportRecords(uid, googleSheetImportSource, newTransactions, nextOccurrences, time.Now().Unix())
 			return a.googleSheetImportRecords.BatchCreateImportRecordsInSession(sess, records)
 		}
 	}
