@@ -2623,11 +2623,28 @@ func (a *TransactionsApi) TransactionParseImportFileHandler(c *core.WebContext) 
 		return nil, errs.Or(err, errs.ErrOperationFailed)
 	}
 
+	var extraFeatureRestrictions []core.UserFeatureRestrictionType
+
+	if fileType == "ai_txt" {
+		extraFeatureRestrictions = append(extraFeatureRestrictions, core.USER_FEATURE_RESTRICTION_TYPE_CREATE_TRANSACTION_FROM_AI_TEXT_RECOGNITION)
+	} else if fileType == "ai_image" {
+		extraFeatureRestrictions = append(extraFeatureRestrictions, core.USER_FEATURE_RESTRICTION_TYPE_CREATE_TRANSACTION_FROM_AI_IMAGE_RECOGNITION)
+	}
+
+	return a.buildImportPreview(c, uid, dataImporter, fileData, clientTimezone, additionalOptions, extraFeatureRestrictions...)
+}
+
+// buildImportPreview loads the current user's accounts/categories/tags, parses the given raw import
+// data with the specified importer, and builds the resulting import preview response. It is shared
+// by every entry point that produces raw import bytes for the same underlying pipeline (uploaded
+// file, Google Sheet fetch, ...), so the parsing/validation/preview-building logic that already
+// exists is never duplicated.
+func (a *TransactionsApi) buildImportPreview(c *core.WebContext, uid int64, dataImporter converter.TransactionDataImporter, fileData []byte, clientTimezone *time.Location, additionalOptions converter.TransactionDataImporterOptions, extraFeatureRestrictions ...core.UserFeatureRestrictionType) (*models.ImportTransactionResponsePageWrapper, *errs.Error) {
 	user, err := a.users.GetUserById(c, uid)
 
 	if err != nil {
 		if !errs.IsCustomError(err) {
-			log.Errorf(c, "[transactions.TransactionParseImportFileHandler] failed to get user, because %s", err.Error())
+			log.Errorf(c, "[transactions.buildImportPreview] failed to get user, because %s", err.Error())
 		}
 
 		return nil, errs.ErrUserNotFound
@@ -2637,18 +2654,16 @@ func (a *TransactionsApi) TransactionParseImportFileHandler(c *core.WebContext) 
 		return nil, errs.ErrNotPermittedToPerformThisAction
 	}
 
-	if fileType == "ai_txt" && user.FeatureRestriction.Contains(core.USER_FEATURE_RESTRICTION_TYPE_CREATE_TRANSACTION_FROM_AI_TEXT_RECOGNITION) {
-		return nil, errs.ErrNotPermittedToPerformThisAction
-	}
-
-	if fileType == "ai_image" && user.FeatureRestriction.Contains(core.USER_FEATURE_RESTRICTION_TYPE_CREATE_TRANSACTION_FROM_AI_IMAGE_RECOGNITION) {
-		return nil, errs.ErrNotPermittedToPerformThisAction
+	for i := 0; i < len(extraFeatureRestrictions); i++ {
+		if user.FeatureRestriction.Contains(extraFeatureRestrictions[i]) {
+			return nil, errs.ErrNotPermittedToPerformThisAction
+		}
 	}
 
 	accounts, err := a.accounts.GetAllAccountsByUid(c, user.Uid)
 
 	if err != nil {
-		log.Errorf(c, "[transactions.TransactionParseImportFileHandler] failed to get accounts for user \"uid:%d\", because %s", user.Uid, err.Error())
+		log.Errorf(c, "[transactions.buildImportPreview] failed to get accounts for user \"uid:%d\", because %s", user.Uid, err.Error())
 		return nil, errs.Or(err, errs.ErrOperationFailed)
 	}
 
@@ -2657,7 +2672,7 @@ func (a *TransactionsApi) TransactionParseImportFileHandler(c *core.WebContext) 
 	categories, err := a.transactionCategories.GetAllCategoriesByUid(c, user.Uid, 0, -1)
 
 	if err != nil {
-		log.Errorf(c, "[transactions.TransactionParseImportFileHandler] failed to get categories for user \"uid:%d\", because %s", user.Uid, err.Error())
+		log.Errorf(c, "[transactions.buildImportPreview] failed to get categories for user \"uid:%d\", because %s", user.Uid, err.Error())
 		return nil, errs.Or(err, errs.ErrOperationFailed)
 	}
 
@@ -2666,7 +2681,7 @@ func (a *TransactionsApi) TransactionParseImportFileHandler(c *core.WebContext) 
 	tags, err := a.transactionTags.GetAllTagsByUid(c, user.Uid)
 
 	if err != nil {
-		log.Errorf(c, "[transactions.TransactionParseImportFileHandler] failed to get tags for user \"uid:%d\", because %s", user.Uid, err.Error())
+		log.Errorf(c, "[transactions.buildImportPreview] failed to get tags for user \"uid:%d\", because %s", user.Uid, err.Error())
 		return nil, errs.Or(err, errs.ErrOperationFailed)
 	}
 
@@ -2675,7 +2690,7 @@ func (a *TransactionsApi) TransactionParseImportFileHandler(c *core.WebContext) 
 	parsedTransactions, _, _, _, _, _, err := dataImporter.ParseImportedData(c, user, fileData, clientTimezone, additionalOptions, accountMap, expenseCategoryMap, incomeCategoryMap, transferCategoryMap, tagMap)
 
 	if err != nil {
-		log.Errorf(c, "[transactions.TransactionParseImportFileHandler] failed to parse imported data for user \"uid:%d\", because %s", user.Uid, err.Error())
+		log.Errorf(c, "[transactions.buildImportPreview] failed to parse imported data for user \"uid:%d\", because %s", user.Uid, err.Error())
 		return nil, errs.Or(err, errs.ErrOperationFailed)
 	}
 

@@ -117,6 +117,12 @@ export interface ApplicationCloudSetting {
     readonly settingValue: string;
 }
 
+export interface GoogleSheetImportUrlHistoryEntry {
+    readonly url: string;
+    readonly lastUsedTime: number;
+    readonly displayName?: string;
+}
+
 export interface LocaleDefaultSettings {
     currency: string;
     firstDayOfWeek: WeekDayValue;

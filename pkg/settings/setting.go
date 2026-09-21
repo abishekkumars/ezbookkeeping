@@ -209,6 +209,9 @@ const (
 
 	defaultImportFileMaxSize uint32 = 10485760 // 10MB
 
+	defaultGoogleSheetImportRequestTimeout  uint32 = 15000   // 15 seconds
+	defaultGoogleSheetImportMaxResponseSize uint32 = 5242880 // 5MB
+
 	defaultExchangeRatesDataRequestTimeout uint32 = 10000 // 10 seconds
 )
 
@@ -273,6 +276,14 @@ type WebDAVConfig struct {
 	RequestTimeout uint32
 	Proxy          string
 	SkipTLSVerify  bool
+}
+
+// GoogleSheetImportConfig represents the Google Sheet transaction import setting config
+type GoogleSheetImportConfig struct {
+	Enabled         bool
+	RequestTimeout  uint32
+	MaxResponseSize uint32
+	Proxy           string
 }
 
 // LLMConfig represents the Large Language Model setting config
@@ -461,6 +472,9 @@ type Config struct {
 	EnableDataImport  bool
 	MaxImportFileSize uint32
 
+	// Google Sheet Import
+	GoogleSheetImportConfig *GoogleSheetImportConfig
+
 	// Tip
 	LoginPageTips MultiLanguageContentConfig
 
@@ -611,6 +625,12 @@ func LoadConfiguration(configFilePath string) (*Config, error) {
 	}
 
 	err = loadDataConfiguration(config, cfgFile, "data")
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = loadGoogleSheetImportConfiguration(config, cfgFile, "google_sheet_import")
 
 	if err != nil {
 		return nil, err
@@ -1205,6 +1225,17 @@ func loadDataConfiguration(config *Config, configFile *ini.File, sectionName str
 	config.EnableDataExport = getConfigItemBoolValue(configFile, sectionName, "enable_export", false)
 	config.EnableDataImport = getConfigItemBoolValue(configFile, sectionName, "enable_import", false)
 	config.MaxImportFileSize = getConfigItemUint32Value(configFile, sectionName, "max_import_file_size", defaultImportFileMaxSize)
+
+	return nil
+}
+
+func loadGoogleSheetImportConfiguration(config *Config, configFile *ini.File, sectionName string) error {
+	googleSheetImportConfig := &GoogleSheetImportConfig{}
+	googleSheetImportConfig.Enabled = getConfigItemBoolValue(configFile, sectionName, "enabled", false)
+	googleSheetImportConfig.RequestTimeout = getConfigItemUint32Value(configFile, sectionName, "request_timeout", defaultGoogleSheetImportRequestTimeout)
+	googleSheetImportConfig.MaxResponseSize = getConfigItemUint32Value(configFile, sectionName, "max_response_size", defaultGoogleSheetImportMaxResponseSize)
+	googleSheetImportConfig.Proxy = getConfigItemStringValue(configFile, sectionName, "proxy", "system")
+	config.GoogleSheetImportConfig = googleSheetImportConfig
 
 	return nil
 }

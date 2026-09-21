@@ -16,6 +16,10 @@ import {
 
 const settingsLocalStorageKey: string = 'ebk_app_settings';
 const currentLanguageSessionStorageKey: string = 'ebk_current_language';
+// Kept in its own storage key, separate from settingsLocalStorageKey, so it survives logout - unlike
+// the rest of ApplicationSettings, this is a reuse convenience (closer to browser autofill history)
+// rather than a per-user preference that should reset when a shared browser switches accounts.
+const googleSheetImportUrlHistoryLocalStorageKey: string = 'ebk_google_sheet_import_url_history';
 
 function getStoredApplicationSettings(): BaseApplicationSetting {
     try {
@@ -107,6 +111,23 @@ export function isEnableAnimate(): boolean {
 
 export function clearSettings(): void {
     localStorage.removeItem(settingsLocalStorageKey);
+}
+
+export function getGoogleSheetImportUrlHistoryFromStorage(): string {
+    try {
+        return localStorage.getItem(googleSheetImportUrlHistoryLocalStorageKey) || '[]';
+    } catch (ex) {
+        console.warn('google sheet import url history in local storage is invalid', ex);
+        return '[]';
+    }
+}
+
+export function setGoogleSheetImportUrlHistoryInStorage(value: string): void {
+    try {
+        localStorage.setItem(googleSheetImportUrlHistoryLocalStorageKey, value);
+    } catch (ex) {
+        console.warn('failed to save google sheet import url history to local storage', ex);
+    }
 }
 
 export function getSessionCurrentLanguageKey(): string {

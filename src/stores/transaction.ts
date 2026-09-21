@@ -35,6 +35,9 @@ import {
     type ImportTransactionResponsePageWrapper,
     ImportTransaction
 } from '@/models/imported_transaction.ts';
+import type {
+    GoogleSheetImportPreviewResponse
+} from '@/models/google_sheet_import.ts';
 import {
     type ExportTransactionDataRequest
 } from '@/models/data_management.ts';
@@ -1581,6 +1584,31 @@ export const useTransactionsStore = defineStore('transactions', () => {
         });
     }
 
+    function parseGoogleSheetImport({ url }: { url: string }): Promise<GoogleSheetImportPreviewResponse> {
+        return new Promise((resolve, reject) => {
+            services.parseGoogleSheetImport({ url }).then(response => {
+                const data = response.data;
+
+                if (!data || !data.success || !data.result) {
+                    reject({ message: 'Unable to parse google sheet' });
+                    return;
+                }
+
+                resolve(data.result);
+            }).catch(error => {
+                logger.error('Unable to parse google sheet', error);
+
+                if (error.response && error.response.data && error.response.data.errorMessage) {
+                    reject({ error: error.response.data });
+                } else if (!error.processed) {
+                    reject({ message: 'Unable to parse google sheet' });
+                } else {
+                    reject(error);
+                }
+            });
+        });
+    }
+
     function importTransactions({ transactions, clientSessionId }: { transactions: ImportTransaction[], clientSessionId: string }): Promise<number> {
         const submitTransactions: TransactionCreateRequest[] = [];
 
@@ -1757,6 +1785,7 @@ export const useTransactionsStore = defineStore('transactions', () => {
         cancelRecognizeReceiptImage,
         parseImportCustomFile,
         parseImportTransaction,
+        parseGoogleSheetImport,
         importTransactions,
         getImportTransactionsProcess,
         uploadTransactionPicture,

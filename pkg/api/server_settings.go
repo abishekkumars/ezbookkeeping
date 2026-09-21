@@ -50,6 +50,7 @@ func (a *ServerSettingsApi) ServerSettingsJavascriptHandler(c *core.WebContext) 
 	a.appendBooleanSetting(builder, "s", config.EnableScheduledTransaction)
 	a.appendBooleanSetting(builder, "e", config.EnableDataExport)
 	a.appendBooleanSetting(builder, "i", config.EnableDataImport)
+	a.appendBooleanSetting(builder, "gsi", config.GoogleSheetImportConfig != nil && config.GoogleSheetImportConfig.Enabled)
 
 	a.appendStringSetting(builder, "op", config.OAuth2Provider)
 

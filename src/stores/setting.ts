@@ -11,6 +11,7 @@ import {
     type ApplicationSettings,
     type ApplicationCloudSetting,
     type LocaleDefaultSettings,
+    type GoogleSheetImportUrlHistoryEntry,
     UserApplicationCloudSettingType,
     ALL_ALLOWED_CLOUD_SYNC_APP_SETTING_KEY_TYPES
 } from '@/core/setting.ts';
@@ -34,16 +35,30 @@ import {
     getLocaleDefaultSettings,
     updateApplicationSettingsValue,
     updateApplicationSettingsSubValue,
-    clearSettings
+    clearSettings,
+    getGoogleSheetImportUrlHistoryFromStorage,
+    setGoogleSheetImportUrlHistoryInStorage
 } from '@/lib/settings.ts';
 
 import logger from '@/lib/logger.ts';
 import services from '@/lib/services.ts';
 
+const MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT = 10;
+
+function parseGoogleSheetImportUrlHistory(serialized: string): GoogleSheetImportUrlHistoryEntry[] {
+    try {
+        const parsed: unknown = JSON.parse(serialized || '[]');
+        return Array.isArray(parsed) ? parsed as GoogleSheetImportUrlHistoryEntry[] : [];
+    } catch {
+        return [];
+    }
+}
+
 export const useSettingsStore = defineStore('settings', () => {
     const appSettings = ref<ApplicationSettings>(getApplicationSettings());
     const syncedAppSettings = ref<Record<string, boolean>>({});
     const localeDefaultSettings = ref<LocaleDefaultSettings>(getLocaleDefaultSettings());
+    const googleSheetImportUrlHistory = ref<GoogleSheetImportUrlHistoryEntry[]>(parseGoogleSheetImportUrlHistory(getGoogleSheetImportUrlHistoryFromStorage()));
 
     const enableApplicationCloudSync = computed<boolean>(() => getObjectOwnFieldCount(syncedAppSettings.value) > 0);
 
@@ -349,6 +364,36 @@ export const useSettingsStore = defineStore('settings', () => {
         updateUserApplicationCloudSettingValue('lastSelectedFileTypeInImportTransactionDialog', value);
     }
 
+    // Google Sheet Import Dialog
+    // Kept in its own local browser storage key (see getGoogleSheetImportUrlHistoryFromStorage),
+    // separate from the rest of ApplicationSettings, so it survives logout/clearAppSettings() - unlike
+    // a per-user preference like theme or language, this is a reuse convenience (closer to browser
+    // autofill history) that a returning user would still expect to see after logging back in.
+    function getGoogleSheetImportUrlHistory(): GoogleSheetImportUrlHistoryEntry[] {
+        return googleSheetImportUrlHistory.value;
+    }
+
+    function saveGoogleSheetImportUrlHistory(history: GoogleSheetImportUrlHistoryEntry[]): void {
+        const sortedHistory = history
+            .slice()
+            .sort((entry1, entry2) => entry2.lastUsedTime - entry1.lastUsedTime)
+            .slice(0, MAX_GOOGLE_SHEET_IMPORT_URL_HISTORY_COUNT);
+
+        googleSheetImportUrlHistory.value = sortedHistory;
+        setGoogleSheetImportUrlHistoryInStorage(JSON.stringify(sortedHistory));
+    }
+
+    function addGoogleSheetImportUrlToHistory(url: string, displayName?: string): void {
+        const history = getGoogleSheetImportUrlHistory().filter(entry => entry.url !== url);
+        history.push({ url: url, lastUsedTime: Math.floor(Date.now() / 1000), displayName: displayName });
+        saveGoogleSheetImportUrlHistory(history);
+    }
+
+    function removeGoogleSheetImportUrlFromHistory(url: string): void {
+        const history = getGoogleSheetImportUrlHistory().filter(entry => entry.url !== url);
+        saveGoogleSheetImportUrlHistory(history);
+    }
+
     // Insights Explorer Page
     function setInsightsExplorerDefaultDateRangeType(value: number): void {
         updateApplicationSettingsValue('insightsExplorerDefaultDateRangeType', value);
@@ -644,6 +689,10 @@ export const useSettingsStore = defineStore('settings', () => {
         // -- Import Transaction Dialog
         setRememberLastSelectedFileTypeInImportTransactionDialog,
         setLastSelectedFileTypeInImportTransactionDialog,
+        // -- Google Sheet Import Dialog
+        getGoogleSheetImportUrlHistory,
+        addGoogleSheetImportUrlToHistory,
+        removeGoogleSheetImportUrlFromHistory,
         // -- Insights Explorer Page
         setInsightsExplorerDefaultDateRangeType,
         setShowTagInInsightsExplorerPage,
