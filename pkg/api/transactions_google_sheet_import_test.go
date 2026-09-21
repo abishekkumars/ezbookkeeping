@@ -112,10 +112,124 @@ func TestGoogleSheetRowHash_IsFixedLengthRegardlessOfCommentLength(t *testing.T)
 	assert.NotEqual(t, shortHash, longHash)
 }
 
-func TestGoogleSheetRowKeyString_SameHashDifferentOccurrenceAreDistinct(t *testing.T) {
-	hash := googleSheetRowHash(models.TRANSACTION_TYPE_EXPENSE, 1000, 1, 1, 100, "lunch")
+func markedReasons(rowKeys []googleSheetRowKey, importedRowHashCounts map[string]int) []models.GoogleSheetDuplicateReason {
+	duplicateReasons := make(map[int]models.GoogleSheetDuplicateReason, len(rowKeys))
+	markAlreadyImportedGoogleSheetRows(duplicateReasons, rowKeys, importedRowHashCounts)
 
-	assert.NotEqual(t, googleSheetRowKeyString(hash, 0), googleSheetRowKeyString(hash, 1))
+	reasons := make([]models.GoogleSheetDuplicateReason, len(rowKeys))
+
+	for i := 0; i < len(rowKeys); i++ {
+		reasons[i] = duplicateReasons[i]
+	}
+
+	return reasons
+}
+
+func TestMarkAlreadyImportedGoogleSheetRows_AppendingANewRowKeepsEarlierRowsFlagged(t *testing.T) {
+	// The reported bug: every row had been imported, then one new row was added to the sheet, and a
+	// previously imported row came back as importable.
+	items := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(2000, 1, 1, 200, "dinner"),
+		newTestGoogleSheetImportItem(3000, 1, 1, 210, "fruits"),
+	}
+
+	importedRowKeys := computeGoogleSheetRowKeys(items)
+	importedRowHashCounts := map[string]int{
+		importedRowKeys[0].hash: 1,
+		importedRowKeys[1].hash: 1,
+		importedRowKeys[2].hash: 1,
+	}
+
+	itemsAfterAppend := append(items, newTestGoogleSheetImportItem(4000, 1, 1, 1, "test"))
+	actualValue := markedReasons(computeGoogleSheetRowKeys(itemsAfterAppend), importedRowHashCounts)
+
+	assert.Equal(t, []models.GoogleSheetDuplicateReason{
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_NONE,
+	}, actualValue)
+}
+
+func TestMarkAlreadyImportedGoogleSheetRows_InsertingADuplicateRowDoesNotUnflagTheImportedOne(t *testing.T) {
+	// Two identical rows were imported. A third identical row is then inserted between them, which
+	// shifts every position-based index - the imported rows must stay flagged regardless.
+	importedItems := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+	}
+
+	hash := computeGoogleSheetRowKeys(importedItems)[0].hash
+	importedRowHashCounts := map[string]int{hash: 2}
+
+	itemsAfterInsert := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+	}
+
+	actualValue := markedReasons(computeGoogleSheetRowKeys(itemsAfterInsert), importedRowHashCounts)
+
+	assert.Equal(t, []models.GoogleSheetDuplicateReason{
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET,
+	}, actualValue)
+}
+
+func TestMarkAlreadyImportedGoogleSheetRows_DeletingARowDoesNotUnflagTheRest(t *testing.T) {
+	importedItems := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(2000, 1, 1, 200, "dinner"),
+		newTestGoogleSheetImportItem(3000, 1, 1, 300, "groceries"),
+	}
+
+	importedRowKeys := computeGoogleSheetRowKeys(importedItems)
+	importedRowHashCounts := map[string]int{
+		importedRowKeys[0].hash: 1,
+		importedRowKeys[1].hash: 1,
+		importedRowKeys[2].hash: 1,
+	}
+
+	itemsAfterDelete := []*models.ImportTransactionResponse{importedItems[0], importedItems[2]}
+	actualValue := markedReasons(computeGoogleSheetRowKeys(itemsAfterDelete), importedRowHashCounts)
+
+	assert.Equal(t, []models.GoogleSheetDuplicateReason{
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+	}, actualValue)
+}
+
+func TestMarkAlreadyImportedGoogleSheetRows_OnlySomeOfTheIdenticalRowsImported(t *testing.T) {
+	items := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+	}
+
+	rowKeys := computeGoogleSheetRowKeys(items)
+	actualValue := markedReasons(rowKeys, map[string]int{rowKeys[0].hash: 2})
+
+	assert.Equal(t, []models.GoogleSheetDuplicateReason{
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_ALREADY_IMPORTED,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET,
+	}, actualValue)
+}
+
+func TestMarkAlreadyImportedGoogleSheetRows_NothingImportedYet(t *testing.T) {
+	items := []*models.ImportTransactionResponse{
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+		newTestGoogleSheetImportItem(1000, 1, 1, 100, "lunch"),
+	}
+
+	actualValue := markedReasons(computeGoogleSheetRowKeys(items), nil)
+
+	assert.Equal(t, []models.GoogleSheetDuplicateReason{
+		models.GOOGLE_SHEET_DUPLICATE_REASON_NONE,
+		models.GOOGLE_SHEET_DUPLICATE_REASON_IN_SHEET,
+	}, actualValue)
 }
 
 func TestValidateGoogleSheetImportSource(t *testing.T) {
@@ -125,8 +239,8 @@ func TestValidateGoogleSheetImportSource(t *testing.T) {
 		SpreadsheetId: "sheet-id",
 		Gid:           "0",
 		RowKeys: []*models.GoogleSheetImportRowKey{
-			{RowHash: "hash-a", Occurrence: 0},
-			{RowHash: "hash-a", Occurrence: 1},
+			{RowHash: "hash-a"},
+			{RowHash: "hash-a"},
 		},
 	}
 
@@ -135,7 +249,7 @@ func TestValidateGoogleSheetImportSource(t *testing.T) {
 
 	emptyHashSource := &models.GoogleSheetImportSource{
 		SpreadsheetId: "sheet-id",
-		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: "", Occurrence: 0}},
+		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: ""}},
 	}
 
 	assert.Equal(t, errs.ErrGoogleSheetImportRowKeysInvalid, validateGoogleSheetImportSource(emptyHashSource, 1))
@@ -153,8 +267,8 @@ func TestBuildGoogleSheetImportRecords_PairsEachTransactionWithItsRow(t *testing
 		SpreadsheetId: "sheet-id",
 		Gid:           "7",
 		RowKeys: []*models.GoogleSheetImportRowKey{
-			{RowHash: "hash-a", Occurrence: 0},
-			{RowHash: "hash-a", Occurrence: 1},
+			{RowHash: "hash-a"},
+			{RowHash: "hash-a"},
 		},
 	}
 
@@ -163,7 +277,7 @@ func TestBuildGoogleSheetImportRecords_PairsEachTransactionWithItsRow(t *testing
 		{TransactionId: 22},
 	}
 
-	actualValue := buildGoogleSheetImportRecords(1234, source, transactions, 99)
+	actualValue := buildGoogleSheetImportRecords(1234, source, transactions, nil, 99)
 
 	assert.Len(t, actualValue, 2)
 	assert.Equal(t, int64(11), actualValue[0].TransactionId)
@@ -177,14 +291,28 @@ func TestBuildGoogleSheetImportRecords_PairsEachTransactionWithItsRow(t *testing
 	assert.Equal(t, int64(99), actualValue[0].ImportedUnixTime)
 }
 
+func TestBuildGoogleSheetImportRecords_ContinuesOccurrencesFromWhatIsAlreadyStored(t *testing.T) {
+	// Importing one of two identical rows now and the other later must not reuse an occurrence that
+	// is already taken, or the second import would collide on the unique index and roll back.
+	source := &models.GoogleSheetImportSource{
+		SpreadsheetId: "sheet-id",
+		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: "hash-a"}},
+	}
+
+	actualValue := buildGoogleSheetImportRecords(1234, source, []*models.Transaction{{TransactionId: 33}}, map[string]int32{"hash-a": 2}, 99)
+
+	assert.Len(t, actualValue, 1)
+	assert.Equal(t, int32(2), actualValue[0].Occurrence)
+}
+
 func TestBuildGoogleSheetImportRecords_ReturnsNothingWhenCountsDoNotLineUp(t *testing.T) {
 	source := &models.GoogleSheetImportSource{
 		SpreadsheetId: "sheet-id",
 		RowKeys:       []*models.GoogleSheetImportRowKey{{RowHash: "hash-a"}},
 	}
 
-	assert.Nil(t, buildGoogleSheetImportRecords(1234, source, []*models.Transaction{{TransactionId: 11}, {TransactionId: 22}}, 99))
-	assert.Nil(t, buildGoogleSheetImportRecords(1234, nil, []*models.Transaction{{TransactionId: 11}}, 99))
+	assert.Nil(t, buildGoogleSheetImportRecords(1234, source, []*models.Transaction{{TransactionId: 11}, {TransactionId: 22}}, nil, 99))
+	assert.Nil(t, buildGoogleSheetImportRecords(1234, nil, []*models.Transaction{{TransactionId: 11}}, nil, 99))
 }
 
 func TestGoogleSheetDuplicateKey_DistinctInputsProduceDistinctKeys(t *testing.T) {

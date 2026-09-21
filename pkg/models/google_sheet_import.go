@@ -16,12 +16,12 @@ const (
 	GOOGLE_SHEET_DUPLICATE_REASON_EXISTING_TRANSACTION GoogleSheetDuplicateReason = "existing_transaction"
 )
 
-// GoogleSheetImportRowKey identifies one row of a Google Sheet for import-record purposes.
-// RowHash is the hashed content fingerprint and Occurrence distinguishes rows within the same sheet
-// that share it.
+// GoogleSheetImportRowKey identifies one row of a Google Sheet for import-record purposes by its
+// hashed content fingerprint. The row's position among identical rows is not part of it - the server
+// assigns that when recording, because a client-supplied position shifts whenever a row is inserted
+// or deleted.
 type GoogleSheetImportRowKey struct {
-	RowHash    string `json:"rowHash" binding:"required,max=64"`
-	Occurrence int32  `json:"occurrence" binding:"min=0"`
+	RowHash string `json:"rowHash" binding:"required,max=64"`
 }
 
 // GoogleSheetImportSource identifies the Google Sheet an import came from, so each imported row can
@@ -39,7 +39,6 @@ type GoogleSheetImportPreviewItem struct {
 	*ImportTransactionResponse
 	RowNumber       int                        `json:"rowNumber"`
 	RowHash         string                     `json:"rowHash"`
-	Occurrence      int32                      `json:"occurrence"`
 	IsDuplicate     bool                       `json:"isDuplicate"`
 	AlreadyImported bool                       `json:"alreadyImported"`
 	DuplicateReason GoogleSheetDuplicateReason `json:"duplicateReason,omitempty"`

@@ -217,7 +217,6 @@ type GoogleSheetImportDialogStep = 'enterUrl' | 'checkData' | 'finalResult';
 interface GoogleSheetDuplicateInfo {
     rowNumber: number;
     rowHash: string;
-    occurrence: number;
     isDuplicate: boolean;
     alreadyImported: boolean;
     duplicateReason?: string;
@@ -373,7 +372,6 @@ function fetchSheet(): void {
             info[transaction.index] = {
                 rowNumber: item.rowNumber,
                 rowHash: item.rowHash,
-                occurrence: item.occurrence,
                 isDuplicate: item.isDuplicate,
                 alreadyImported: item.alreadyImported,
                 duplicateReason: item.duplicateReason
@@ -455,8 +453,7 @@ function submit(): void {
             const info = duplicateInfo.value[transaction.index];
             transactions.push(transaction);
             rowKeys.push({
-                rowHash: info?.rowHash ?? '',
-                occurrence: info?.occurrence ?? 0
+                rowHash: info?.rowHash ?? ''
             });
         }
     }
